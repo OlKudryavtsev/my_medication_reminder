@@ -2,263 +2,99 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Семейная аптечка</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --text:#17212b; --muted:#6b7280; --accent:#2ea6ff; --ok:#1f9d55; --warn:#e79016; --danger:#d64545; }
-    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
-    .wrap { max-width:860px; margin:0 auto; padding:16px; }
-    h1 { font-size:24px; margin:8px 0 4px; }
-    h2 { font-size:18px; margin:0 0 10px; }
-    .sub { color:var(--muted); margin-bottom:16px; }
-    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
-    .tab { background:#e9eef7; color:#17212b; }
-    .tab.active { background:var(--accent); color:white; }
-    .card { background:var(--card); border-radius:18px; padding:14px; box-shadow:0 8px 28px rgba(20,25,40,.08); margin:12px 0; }
-    .dose { display:grid; grid-template-columns:58px 1fr; gap:10px; border-bottom:1px solid #edf0f5; padding:12px 0; }
-    .dose:last-child { border-bottom:0; }
-    .time { font-weight:800; }
-    .title { line-height:1.25; }
-    .status { font-size:13px; color:var(--muted); margin-top:4px; }
-    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-    button { border:0; border-radius:12px; padding:10px 12px; font-weight:700; background:var(--accent); color:white; cursor:pointer; }
-    button.ok { background:var(--ok); }
-    button.warn { background:var(--warn); }
-    button.danger { background:var(--danger); }
-    button.gray { background:#758195; }
-    button:disabled { opacity:.55; cursor:not-allowed; }
-    input, select { width:100%; box-sizing:border-box; padding:12px; border:1px solid #dce2ea; border-radius:12px; margin:6px 0 10px; font-size:16px; }
-    label { font-size:13px; color:var(--muted); }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
-    .toast { position:fixed; left:16px; right:16px; bottom:16px; background:#17212b; color:white; border-radius:14px; padding:12px; display:none; z-index:10; }
-    .pill { display:inline-block; background:#eef7ff; color:#14639b; border-radius:999px; padding:4px 8px; font-size:12px; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { text-align:left; padding:8px; border-bottom:1px solid #edf0f5; font-size:14px; vertical-align:top; }
-    .hidden { display:none; }
-    .deny { background:#fff0f0; color:#7f1d1d; border:1px solid #ffd0d0; }
-    @media (max-width:650px) { .row,.row3 { grid-template-columns:1fr; } .dose { grid-template-columns:48px 1fr; } }
+    :root{
+      --bg:#f6f7fb; --card:#ffffff; --text:#111827; --muted:#6b7280; --line:#e8ecf2;
+      --brand:#2f80ed; --brand2:#eaf3ff; --ok:#18a058; --warn:#f59e0b; --danger:#ef4444;
+      --shadow:0 8px 28px rgba(15,23,42,.08); --radius:22px;
+    }
+    [data-theme="dark"]{
+      --bg:#0d1117; --card:#161b22; --text:#f2f5f9; --muted:#9aa4b2; --line:#293241;
+      --brand:#60a5fa; --brand2:#12233a; --ok:#22c55e; --warn:#fbbf24; --danger:#f87171;
+      --shadow:0 12px 34px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    body{padding:env(safe-area-inset-top) 0 calc(86px + env(safe-area-inset-bottom));}
+    .wrap{max-width:720px;margin:0 auto;padding:18px 14px 20px}
+    .top{position:sticky;top:0;z-index:5;margin:-18px -14px 14px;padding:16px 14px 10px;background:linear-gradient(180deg,var(--bg) 72%,rgba(246,247,251,0));backdrop-filter:blur(16px)}
+    [data-theme="dark"] .top{background:linear-gradient(180deg,var(--bg) 72%,rgba(13,17,23,0))}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{font-size:24px;line-height:1.1;margin:0;font-weight:800;letter-spacing:-.02em}.sub{color:var(--muted);font-size:13px;margin-top:6px}
+    .themeBtn{border:1px solid var(--line);background:var(--card);color:var(--text);box-shadow:none;border-radius:999px;width:44px;height:36px;padding:0;font-size:18px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin:12px 0}.card h2{font-size:18px;margin:0 0 12px}.muted{color:var(--muted)}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--brand2);color:var(--brand);font-size:12px;font-weight:700;margin-bottom:10px}
+    .dose{display:grid;grid-template-columns:56px minmax(0,1fr);gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}.dose:last-child{border-bottom:0}
+    .time{font-weight:800;color:var(--brand);font-size:17px;line-height:1.2;padding-top:2px}.title{min-width:0}.med{font-weight:800;font-size:16px;line-height:1.25}.meta{font-size:13px;color:var(--muted);line-height:1.35;margin-top:3px}.status{font-size:13px;margin-top:7px;color:var(--muted)}
+    .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.actions.three{grid-template-columns:1fr 1fr}.actions .wide{grid-column:1/-1}
+    button{appearance:none;border:0;border-radius:14px;padding:11px 12px;background:var(--brand);color:white;font-weight:800;font-size:14px;line-height:1;min-height:42px}button:disabled{opacity:.45}.ok{background:var(--ok)}.warn{background:var(--warn);color:#111}.danger{background:var(--danger)}.gray{background:var(--brand2);color:var(--brand)}
+    input,select{width:100%;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--card);color:var(--text);font-size:16px;min-height:44px}label{display:block;font-size:12px;font-weight:800;color:var(--muted);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.formrow{border:1px solid var(--line);border-radius:18px;padding:12px;margin:10px 0;background:rgba(127,127,127,.03)}
+    .miniTable{width:100%;border-collapse:separate;border-spacing:0 8px}.miniTable td,.miniTable th{text-align:left;font-size:13px;padding:9px;vertical-align:top;background:rgba(127,127,127,.04)}.miniTable th{color:var(--muted);font-size:12px}.miniTable td:first-child,.miniTable th:first-child{border-radius:12px 0 0 12px}.miniTable td:last-child,.miniTable th:last-child{border-radius:0 12px 12px 0}
+    .bottomTabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.86);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px max(10px,env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-right));display:flex;justify-content:center;gap:6px}[data-theme="dark"] .bottomTabs{background:rgba(22,27,34,.86)}
+    .tab{max-width:720px;flex:1;border-radius:16px;background:transparent;color:var(--muted);box-shadow:none;padding:8px 4px;min-height:54px;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}.tab .ico{font-size:20px}.tab.active{background:var(--brand2);color:var(--brand)}.hidden{display:none!important}.deny{background:#fff0f0;color:#7f1d1d;border:1px solid #ffd0d0}[data-theme="dark"] .deny{background:#33191b;color:#fecaca;border-color:#7f1d1d}
+    .toast{position:fixed;left:14px;right:14px;bottom:calc(86px + env(safe-area-inset-bottom));background:#111827;color:white;border-radius:16px;padding:13px 14px;text-align:center;display:none;z-index:30;font-size:14px}.empty{text-align:center;color:var(--muted);padding:24px 8px}
+    @media(max-width:420px){.wrap{padding-left:12px;padding-right:12px}.grid2,.grid3{grid-template-columns:1fr}.actions{grid-template-columns:1fr}.dose{grid-template-columns:50px minmax(0,1fr)}h1{font-size:22px}.card{padding:13px;border-radius:20px}.tab{font-size:10px}.miniTable{display:block;overflow-x:auto;white-space:nowrap}}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>💊 Семейная аптечка</h1>
-    <div class="sub">Приемы, отметки, пропуски, отложенные будильники и спокойные родители.</div>
-
+    <div class="top"><div class="head"><div><h1>💊 Семейная аптечка</h1><div class="sub">Лекарства, отметки, история и спокойные родители</div></div><button class="themeBtn" onclick="toggleTheme()" id="themeBtn">🌙</button></div></div>
     <div id="access" class="card hidden"></div>
-
-    <div id="main" class="hidden">
-      <div class="tabs">
-        <button id="tabToday" class="tab active" onclick="showTab('today')">Сегодня</button>
-        <button id="tabStats" class="tab" onclick="showTab('stats')">Статистика</button>
-        <button id="tabHistory" class="tab" onclick="showTab('history')">История</button>
-        <button id="tabAdmin" class="tab hidden" onclick="showTab('admin')">⚙️ Администрирование</button>
-      </div>
-
-      <section id="pageToday" class="card">
-        <span class="pill">Сегодня</span>
-        <div id="today">Загрузка...</div>
-      </section>
-
-      <section id="pageStats" class="card hidden">
-        <h2>📊 Статистика за 30 дней</h2>
-        <div id="stats">Загрузка...</div>
-      </section>
-
-      <section id="pageHistory" class="card hidden">
-        <h2>🧾 История по препарату</h2>
-        <label>Препарат</label>
-        <select id="medicineSelect" onchange="loadHistory()"></select>
-        <div id="history">Выберите препарат</div>
-      </section>
-
-      <section id="pageAdmin" class="hidden">
-        <div class="card">
-          <h2>Добавить прием</h2>
-          <label>Лекарство</label>
-          <input id="name" placeholder="Например, Аквадетрим" />
-          <label>Доза</label>
-          <input id="dose" placeholder="Например, 2 капли" />
-          <div class="row">
-            <div><label>Время</label><input id="time" type="time" value="09:00" /></div>
-            <div><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div>
-          </div>
-          <div class="row">
-            <div><label>Дата начала</label><input id="startDate" type="date" /></div>
-            <div><label>Дата окончания</label><input id="endDate" type="date" /></div>
-          </div>
-          <button onclick="addSchedule()">Добавить</button>
+    <main id="main" class="hidden">
+      <section id="pageToday" class="page"><div class="card"><span class="badge">Сегодня</span><div id="today">Загрузка...</div></div></section>
+      <section id="pageStats" class="page hidden"><div class="card"><h2>📊 Статистика за 30 дней</h2><div id="stats">Загрузка...</div></div></section>
+      <section id="pageHistory" class="page hidden"><div class="card"><h2>🧾 История по препарату</h2><label>Препарат</label><select id="medicineSelect" onchange="loadHistory()"></select><div id="history" class="muted" style="margin-top:10px">Выберите препарат</div></div></section>
+      <section id="pageAdmin" class="page hidden">
+        <div class="card"><h2>⚙️ Добавить прием</h2>
+          <label>Лекарство</label><input id="name" placeholder="Например, Аквадетрим" />
+          <label>Доза</label><input id="dose" placeholder="Например, 2 капли" />
+          <div class="grid2"><div><label>Время</label><input id="time" type="time" value="09:00" /></div><div><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div></div>
+          <div class="grid2"><div><label>Дата начала</label><input id="startDate" type="date" /></div><div><label>Дата окончания</label><input id="endDate" type="date" /></div></div>
+          <button class="wide" onclick="addSchedule()" style="width:100%;margin-top:12px">Добавить</button>
         </div>
-        <div class="card">
-          <h2>Текущее расписание</h2>
-          <div id="schedules">Загрузка...</div>
-        </div>
+        <div class="card"><h2>Текущее расписание</h2><div id="schedules">Загрузка...</div></div>
       </section>
-    </div>
+    </main>
   </div>
+  <nav id="bottomTabs" class="bottomTabs hidden">
+    <button id="tabToday" class="tab active" onclick="showTab('today')"><span class="ico">📋</span><span>Сегодня</span></button>
+    <button id="tabStats" class="tab" onclick="showTab('stats')"><span class="ico">📊</span><span>Статистика</span></button>
+    <button id="tabHistory" class="tab" onclick="showTab('history')"><span class="ico">🧾</span><span>История</span></button>
+    <button id="tabAdmin" class="tab hidden" onclick="showTab('admin')"><span class="ico">⚙️</span><span>Админ</span></button>
+  </nav>
   <div class="toast" id="toast"></div>
-
 <script>
-  const tg = window.Telegram?.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
-  const initData = tg?.initData || "";
-  let me = null;
-
-  function toast(text) {
-    const el = document.getElementById('toast');
-    el.textContent = text;
-    el.style.display = 'block';
-    setTimeout(() => el.style.display = 'none', 3500);
-  }
-
-  async function api(path, options={}) {
-    const res = await fetch(path, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData, ...(options.headers || {}) }
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const txt = await res.text();
-    return txt ? JSON.parse(txt) : {};
-  }
-
-  function showTab(name) {
-    ['today','stats','history','admin'].forEach(t => {
-      document.getElementById('page' + t[0].toUpperCase() + t.slice(1))?.classList.add('hidden');
-      document.getElementById('tab' + t[0].toUpperCase() + t.slice(1))?.classList.remove('active');
-    });
-    document.getElementById('page' + name[0].toUpperCase() + name.slice(1)).classList.remove('hidden');
-    document.getElementById('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
-    if (name === 'stats') loadStats();
-    if (name === 'history') loadMedicines();
-    if (name === 'admin') loadSchedules();
-  }
-
-  function statusText(r) {
-    if (r.status === 'taken') return '✅ принято ' + (r.taken_at || '');
-    if (r.status === 'skipped') return '⏭️ пропущено ' + (r.skipped_at || '');
-    if (r.postponed_until) return '😴 отложено до ' + r.postponed_until;
-    return '⏳ ждет отметки';
-  }
-
-  async function loadToday() {
-    const root = document.getElementById('today');
-    const rows = await api('/api/today');
-    if (!rows.length) { root.textContent = 'Сегодня приемов нет'; return; }
-    root.innerHTML = rows.map(r => `
-      <div class="dose">
-        <div class="time">${r.time}</div>
-        <div class="title">
-          <b>${r.title}</b>
-          <div class="status">${statusText(r)}</div>
-          <div class="actions">
-            <input id="actual_${r.id}" type="time" value="${r.taken_at || new Date().toTimeString().slice(0,5)}" ${r.status !== 'pending' ? 'disabled' : ''} style="max-width:130px;margin:0" />
-            <button class="ok" ${r.status !== 'pending' ? 'disabled' : ''} onclick="take(${r.id})">Выпил</button>
-            <button class="warn" ${r.status !== 'pending' ? 'disabled' : ''} onclick="snooze(${r.id})">Отложить 30 мин</button>
-            <button class="danger" ${r.status !== 'pending' ? 'disabled' : ''} onclick="skip(${r.id})">Пропущено</button>
-          </div>
-        </div>
-      </div>`).join('');
-  }
-
-  async function take(id) {
-    const actual = document.getElementById('actual_' + id)?.value || null;
-    const data = await api(`/api/events/${id}/take`, { method:'POST', body: JSON.stringify({ actual_time: actual }) });
-    toast(data.message || 'Отмечено');
-    loadToday();
-    if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-  }
-
-  async function skip(id) {
-    await api(`/api/events/${id}/skip`, { method:'POST', body: JSON.stringify({}) });
-    toast('Пропуск сохранен');
-    loadToday();
-  }
-
-  async function snooze(id) {
-    const data = await api(`/api/events/${id}/snooze`, { method:'POST', body: JSON.stringify({}) });
-    toast(data.message || 'Отложено');
-    loadToday();
-  }
-
-  async function addSchedule() {
-    if (!me?.is_parent) { toast('Доступно только родителям'); return; }
-    const payload = {
-      name: document.getElementById('name').value.trim(),
-      dose: document.getElementById('dose').value.trim(),
-      time_local: document.getElementById('time').value,
-      label: document.getElementById('label').value.trim(),
-      start_date: document.getElementById('startDate').value || null,
-      end_date: document.getElementById('endDate').value || null,
-    };
-    if (!payload.name || !payload.dose || !payload.time_local) { toast('Заполните лекарство, дозу и время'); return; }
-    await api('/api/schedules', { method:'POST', body: JSON.stringify(payload) });
-    toast('Прием добавлен');
-    ['name','dose','label','startDate','endDate'].forEach(id => document.getElementById(id).value='');
-    loadSchedules(); loadToday();
-  }
-
-  async function loadSchedules() {
-    if (!me?.is_parent) return;
-    const root = document.getElementById('schedules');
-    const rows = await api('/api/schedules');
-    if (!rows.length) { root.textContent = 'Расписание пустое'; return; }
-    root.innerHTML = `<table><tr><th>Время</th><th>Препарат</th><th>Курс</th><th></th></tr>${rows.map(r => `
-      <tr>
-        <td>${r.time_local}</td>
-        <td><b>${r.name}</b><br>${r.dose}<br><span class="status">${r.label}</span></td>
-        <td>${r.start_date || '—'}<br>${r.end_date || 'бессрочно'}</td>
-        <td><button class="gray" onclick="deleteSchedule(${r.id})">Отключить</button></td>
-      </tr>`).join('')}</table>`;
-  }
-
-  async function deleteSchedule(id) {
-    await api('/api/schedules/' + id, { method:'DELETE' });
-    toast('Прием отключен');
-    loadSchedules(); loadToday();
-  }
-
-  async function loadStats() {
-    const rows = await api('/api/stats');
-    const root = document.getElementById('stats');
-    if (!rows.length) { root.textContent = 'Статистики пока нет'; return; }
-    root.innerHTML = `<table><tr><th>Препарат</th><th>Принято</th><th>Пропущено</th><th>Ожидает</th><th>%</th></tr>${rows.map(r => `
-      <tr><td>${r.medicine}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table>`;
-  }
-
-  async function loadMedicines() {
-    const select = document.getElementById('medicineSelect');
-    if (select.dataset.loaded) return;
-    const meds = await api('/api/medicines');
-    select.innerHTML = meds.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
-    select.dataset.loaded = '1';
-    if (meds.length) loadHistory();
-  }
-
-  async function loadHistory() {
-    const id = document.getElementById('medicineSelect').value;
-    const root = document.getElementById('history');
-    if (!id) { root.textContent = 'Выберите препарат'; return; }
-    const rows = await api(`/api/medicines/${id}/history`);
-    if (!rows.length) { root.textContent = 'Истории пока нет'; return; }
-    root.innerHTML = `<table><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r => `
-      <tr><td>${r.date}</td><td>${r.due_time}<br>${r.title}</td><td>${r.status === 'taken' ? '✅ ' + (r.taken_at || '') : r.status === 'skipped' ? '⏭️' : '⏳'}</td></tr>`).join('')}</table>`;
-  }
-
-  async function init() {
-    try {
-      me = await api('/api/me');
-      document.getElementById('main').classList.remove('hidden');
-      if (me.is_parent) document.getElementById('tabAdmin').classList.remove('hidden');
-      await loadToday();
-      if (location.hash === '#admin' && me.is_parent) showTab('admin');
-    } catch(e) {
-      const access = document.getElementById('access');
-      access.className = 'card deny';
-      access.textContent = 'Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.';
-    }
-  }
-  init().catch(e => toast('Ошибка: ' + e.message));
+  const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
+  const initData = tg?.initData || ""; let me = null;
+  const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
+  setTheme(savedTheme);
+  function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('theme',t);document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙'}
+  function toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')}
+  function toast(text){const el=document.getElementById('toast');el.textContent=text;el.style.display='block';setTimeout(()=>el.style.display='none',3200)}
+  async function api(path, options={}){const res=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData,...(options.headers||{})}});if(!res.ok)throw new Error(await res.text());const txt=await res.text();return txt?JSON.parse(txt):{}}
+  function pageId(name){return 'page'+name[0].toUpperCase()+name.slice(1)} function tabId(name){return 'tab'+name[0].toUpperCase()+name.slice(1)}
+  function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin')loadSchedules();window.scrollTo({top:0,behavior:'smooth'});}
+  function statusText(r){if(r.status==='taken')return '✅ принято в '+(r.taken_at||'—');if(r.status==='skipped')return '⏭️ пропущено '+(r.skipped_at||'');if(r.postponed_until)return '😴 отложено до '+r.postponed_until;return '⏳ ждет отметки'}
+  function escapeHtml(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+  async function loadToday(){const root=document.getElementById('today');const rows=await api('/api/today');if(!rows.length){root.innerHTML='<div class="empty">Сегодня приемов нет</div>';return}root.innerHTML=rows.map(r=>{const disabled=r.status==='skipped'?'disabled':'';const actual=r.taken_at||new Date().toTimeString().slice(0,5);return `<div class="dose"><div class="time">${r.time}</div><div class="title"><div class="med">${escapeHtml(r.medicine)}</div><div class="meta">${escapeHtml(r.dose)} · ${escapeHtml(r.label)}</div><div class="status">${statusText(r)}</div><div class="actions three"><input id="actual_${r.id}" type="time" value="${actual}" ${disabled} class="wide" /><button class="ok" onclick="take(${r.id}, ${r.status==='taken'})">${r.status==='taken'?'Изменить время':'Выпил'}</button><button class="warn" ${r.status!=='pending'?'disabled':''} onclick="snooze(${r.id})">Отложить</button><button class="danger wide" ${r.status!=='pending'?'disabled':''} onclick="skip(${r.id})">Пропущено</button></div></div></div>`}).join('')}
+  async function take(id, edit=false){const actual=document.getElementById('actual_'+id)?.value||null;const path=edit?`/api/events/${id}/taken-time`:`/api/events/${id}/take`;const method=edit?'PATCH':'POST';const data=await api(path,{method,body:JSON.stringify({actual_time:actual})});toast(data.message||'Сохранено');await loadToday();if(tg?.HapticFeedback)tg.HapticFeedback.notificationOccurred('success')}
+  async function skip(id){await api(`/api/events/${id}/skip`,{method:'POST',body:JSON.stringify({})});toast('Пропуск сохранен');loadToday()}
+  async function snooze(id){const data=await api(`/api/events/${id}/snooze`,{method:'POST',body:JSON.stringify({})});toast(data.message||'Отложено');loadToday()}
+  function scheduleForm(r){return `<div class="formrow" id="sched_${r.id}"><div class="grid2"><div><label>Лекарство</label><input id="s_name_${r.id}" value="${escapeHtml(r.name)}"></div><div><label>Доза</label><input id="s_dose_${r.id}" value="${escapeHtml(r.dose)}"></div></div><div class="grid2"><div><label>Время</label><input id="s_time_${r.id}" type="time" value="${r.time_local}"></div><div><label>Комментарий</label><input id="s_label_${r.id}" value="${escapeHtml(r.label)}"></div></div><div class="grid2"><div><label>Начало</label><input id="s_start_${r.id}" type="date" value="${r.start_date||''}"></div><div><label>Окончание</label><input id="s_end_${r.id}" type="date" value="${r.end_date||''}"></div></div><div class="actions"><button onclick="saveSchedule(${r.id})">Сохранить</button><button class="danger" onclick="deleteSchedule(${r.id})">Отключить</button></div></div>`}
+  async function loadSchedules(){if(!me?.is_parent)return;const rows=await api('/api/schedules');const root=document.getElementById('schedules');root.innerHTML=rows.length?rows.map(scheduleForm).join(''):'<div class="empty">Расписание пустое</div>'}
+  function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
+  async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});toast('Расписание обновлено');loadSchedules();loadToday()}
+  async function addSchedule(){if(!me?.is_parent){toast('Доступно только родителям');return}const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),time_local:document.getElementById('time').value,label:document.getElementById('label').value.trim(),start_date:document.getElementById('startDate').value||null,end_date:document.getElementById('endDate').value||null};if(!payload.name||!payload.dose||!payload.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules',{method:'POST',body:JSON.stringify(payload)});toast('Прием добавлен');['name','dose','label','startDate','endDate'].forEach(id=>document.getElementById(id).value='');loadSchedules();loadToday()}
+  async function deleteSchedule(id){if(!confirm('Отключить этот прием в расписании?'))return;await api('/api/schedules/'+id,{method:'DELETE'});toast('Прием отключен');loadSchedules();loadToday()}
+  async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}root.innerHTML=`<table class="miniTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table>`}
+  async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
+  async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<table class="miniTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table>`}
+  async function init(){try{me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.is_parent)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.is_parent)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+  init();
 </script>
 </body>
 </html>

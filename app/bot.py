@@ -19,6 +19,7 @@ from .service import (
     mark_taken,
     mark_skipped,
     snooze_event,
+    update_taken_time,
     format_today,
     event_title,
     thanks_text,
@@ -194,8 +195,10 @@ async def today_cb(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         await ensure_events(session)
         events = await get_today_events(session)
-    await callback.message.answer(format_today(events), reply_markup=app_keyboard())
-    await callback.answer()
+    # В уведомлениях у родителей callback.message может быть неудачной точкой ответа,
+    # поэтому отправляем расписание напрямую тому, кто нажал кнопку.
+    await bot.send_message(callback.from_user.id, format_today(events), reply_markup=app_keyboard())
+    await callback.answer("Отправил расписание на сегодня")
 
 
 @dp.message(Command("app"))
@@ -301,8 +304,9 @@ async def take(callback: CallbackQuery) -> None:
     if not event:
         await callback.answer("Не нашел прием", show_alert=True)
         return
-    thanks = thanks_text()
-    await callback.message.answer(thanks)
+    thanks = thanks_text(event.id)
+    edit_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✏️ Изменить время приема", callback_data=f"takemanual:{event.id}")]])
+    await callback.message.answer(thanks, reply_markup=edit_kb)
     who = callback.from_user.full_name or str(callback.from_user.id)
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else datetime.now(TZ).strftime("%H:%M")
     notify = f"✅ {who} отметил прием: {event_title(event)}\nФактическое время: {actual}"
@@ -353,8 +357,9 @@ async def take_manual_time(message: Message, state: FSMContext) -> None:
     if not event:
         await message.answer("Не нашел прием.")
         return
-    thanks = thanks_text()
-    await message.answer(thanks)
+    thanks = thanks_text(event.id)
+    edit_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✏️ Изменить время приема", callback_data=f"takemanual:{event.id}")]])
+    await message.answer(thanks, reply_markup=edit_kb)
     who = message.from_user.full_name or str(message.from_user.id)
     notify = f"✅ {who} отметил прием: {event_title(event)}\nФактическое время: {hhmm}"
     for parent_id in settings.parents:
@@ -375,7 +380,7 @@ async def skip(callback: CallbackQuery) -> None:
     if not event:
         await callback.answer("Не нашел прием", show_alert=True)
         return
-    text = skip_text()
+    text = skip_text(event.id)
     await callback.message.answer(text)
     who = callback.from_user.full_name or str(callback.from_user.id)
     notify = f"⏭️ {who} отметил пропуск: {event_title(event)}"

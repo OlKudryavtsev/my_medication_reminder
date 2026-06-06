@@ -29,6 +29,8 @@ from .service import (
     mark_taken,
     mark_skipped,
     snooze_event,
+    update_taken_time,
+    update_schedule,
     thanks_text,
     get_stats,
     get_history_for_medicine,
@@ -193,7 +195,7 @@ async def api_take(event_id: int, payload: TakePayload, request: Request):
         event = await mark_taken(session, event_id, tg_id, actual_time=payload.actual_time)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    text = thanks_text()
+    text = thanks_text(event.id)
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else ""
     for parent_id in settings.parents:
         if parent_id != tg_id:
@@ -202,6 +204,25 @@ async def api_take(event_id: int, payload: TakePayload, request: Request):
             except Exception:
                 pass
     return {"ok": True, "message": text}
+
+
+@app.patch("/api/events/{event_id}/taken-time")
+async def api_update_taken_time(event_id: int, payload: TakePayload, request: Request):
+    tg_id, _ = require_known(request)
+    if not payload.actual_time:
+        raise HTTPException(status_code=400, detail="actual_time is required")
+    async with SessionLocal() as session:
+        event = await update_taken_time(session, event_id, tg_id, payload.actual_time)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else payload.actual_time
+    for parent_id in settings.parents:
+        if parent_id != tg_id:
+            try:
+                await bot.send_message(parent_id, f"✏️ В мини-приложении изменено фактическое время: {event_title(event)}\nНовое время: {actual}")
+            except Exception:
+                pass
+    return {"ok": True, "message": f"Время изменено на {actual}"}
 
 
 @app.post("/api/events/{event_id}/skip")
@@ -276,6 +297,27 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         await session.commit()
         await ensure_events(session)
         return {"ok": True, "id": sched.id}
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, request: Request):
+    require_parent(request)
+    start_date = parse_date_or_none(payload.start_date)
+    end_date = parse_date_or_none(payload.end_date)
+    async with SessionLocal() as session:
+        sched = await update_schedule(
+            session,
+            schedule_id=schedule_id,
+            name=payload.name,
+            dose=payload.dose,
+            hhmm=payload.time_local,
+            label=payload.label or payload.time_local,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not sched:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return {"ok": True}
 
 
 @app.delete("/api/schedules/{schedule_id}")

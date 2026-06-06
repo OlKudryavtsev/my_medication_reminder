@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,30 +9,18 @@ from sqlalchemy.orm import selectinload
 
 from .config import get_settings
 from .db import Medicine, Schedule, DoseEvent
+from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
 TZ = ZoneInfo(settings.timezone)
 
-FUN_REMINDERS = [
-    "🦸 Пора принять лекарство: {title}. Таблетки сами в рот не прыгают, им нужен герой!",
-    "⏰ Медицинский будильник не дремлет: {title}. Выпил — нажми кнопку, и все выдохнут.",
-    "🚀 Запуск миссии «здоровый живот»: {title}. Осталось подтвердить прием.",
-    "🕵️ Напоминание-сыщик нашло непринятое лекарство: {title}. Не дай ему уйти в архив!",
-    "🐢 Лекарство ждет уже как черепаха на старте: {title}. Догоним расписание?",
-]
-
-THANKS = [
-    "💪 Отлично! Прием отмечен. Организм говорит: «Спасибо, капитан!»",
-    "🌟 Готово! Еще один пункт лечения закрыт — красиво и уверенно.",
-    "🏆 Принято! Маленькая победа в большом курсе лечения.",
-    "👏 Спасибо, отметка сохранена. Родители тоже могут спокойно выдохнуть.",
-]
 
 SKIP_TEXTS = [
     "🟡 Отметил как пропущено. Главное — честная статистика, без нее аптечный штаб слепнет.",
     "📝 Пропуск сохранен. Не ругаемся, фиксируем факт и идем дальше по плану.",
+    "👌 Пропуск записан. Честные данные лучше красивой легенды.",
+    "🧾 Сохранил пропуск. Аптечный журнал не осуждает, он фиксирует.",
 ]
-
 
 def parse_hhmm(value: str) -> time:
     h, m = value.split(":")
@@ -179,15 +166,18 @@ def reminder_text(event: DoseEvent) -> str:
     postponed = ""
     if event.postponed_until:
         postponed = f"\n⏰ Отложено было до {event.postponed_until.astimezone(TZ).strftime('%H:%M')}."
-    return random.choice(FUN_REMINDERS).format(title=event_title(event)) + postponed
+    idx = (event.id + event.reminder_count) % len(REMINDER_TEMPLATES)
+    return REMINDER_TEMPLATES[idx].format(title=event_title(event)) + postponed
 
 
-def thanks_text() -> str:
-    return random.choice(THANKS)
+def thanks_text(event_id: int | None = None) -> str:
+    base = event_id or int(datetime.now(TZ).timestamp())
+    return THANKS_TEMPLATES[base % len(THANKS_TEMPLATES)]
 
 
-def skip_text() -> str:
-    return random.choice(SKIP_TEXTS)
+def skip_text(event_id: int | None = None) -> str:
+    base = event_id or int(datetime.now(TZ).timestamp())
+    return SKIP_TEXTS[base % len(SKIP_TEXTS)]
 
 
 async def get_event(session: AsyncSession, event_id: int) -> DoseEvent | None:
@@ -243,6 +233,58 @@ async def snooze_event(session: AsyncSession, event_id: int, tg_id: int, minutes
     await session.commit()
     return event
 
+
+
+async def update_taken_time(session: AsyncSession, event_id: int, tg_id: int, actual_time: str) -> DoseEvent | None:
+    event = await get_event(session, event_id)
+    if not event:
+        return None
+    event.status = "taken"
+    event.taken_at = local_dt(event.due_at.astimezone(TZ).date(), actual_time)
+    event.taken_by = tg_id
+    event.postponed_until = None
+    await session.commit()
+    return event
+
+
+async def update_schedule(
+    session: AsyncSession,
+    schedule_id: int,
+    name: str,
+    dose: str,
+    hhmm: str,
+    label: str = "",
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> Schedule | None:
+    sched = (await session.execute(
+        select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.id == schedule_id)
+    )).scalar_one_or_none()
+    if not sched:
+        return None
+    med = await upsert_medicine(session, name, dose)
+    sched.medicine_id = med.id
+    sched.dose = dose
+    sched.time_local = hhmm
+    sched.label = label or hhmm
+    sched.start_date = start_date
+    sched.end_date = end_date
+    sched.active = True
+
+    # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.
+    now = datetime.now(TZ)
+    old_pending = (await session.execute(
+        select(DoseEvent).where(
+            DoseEvent.schedule_id == schedule_id,
+            DoseEvent.status == "pending",
+            DoseEvent.due_at >= now,
+        )
+    )).scalars().all()
+    for event in old_pending:
+        await session.delete(event)
+    await session.commit()
+    await ensure_events(session)
+    return sched
 
 def status_icon(e: DoseEvent) -> str:
     if e.status == "taken":
