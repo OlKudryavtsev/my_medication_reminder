@@ -154,7 +154,16 @@
     }).join('')
   }
   async function loadToday(){todayRows=await api('/api/today');renderToday()}
-  async function take(id){const actual=new Date().toTimeString().slice(0,5);const data=await api(`/api/events/${id}/take`,{method:'POST',body:JSON.stringify({actual_time:actual})});toast(data.message||'Сохранено');await loadToday();if(tg?.HapticFeedback)tg.HapticFeedback.notificationOccurred('success')}
+  async function take(id){
+    const now=new Date().toTimeString().slice(0,5);
+    const actual=await chooseTime('Фактическое время приема', now);
+    if(actual===null)return;
+    if(!/^\d{2}:\d{2}$/.test(actual)){toast('Выберите время');return}
+    const data=await api(`/api/events/${id}/take`,{method:'POST',body:JSON.stringify({actual_time:actual})});
+    toast(data.message||'Сохранено');
+    await loadToday();
+    if(tg?.HapticFeedback)tg.HapticFeedback.notificationOccurred('success')
+  }
   async function editTakenTime(id,current,planned){const value=await chooseTime('Фактическое время приема', current || planned);if(value===null)return;if(!/^\d{2}:\d{2}$/.test(value)){toast('Выберите время');return}const data=await api(`/api/events/${id}/taken-time`,{method:'PATCH',body:JSON.stringify({actual_time:value})});toast(data.message||'Время обновлено');await loadToday()}
 
   async function changeStatus(id,current,currentTime,planned){
