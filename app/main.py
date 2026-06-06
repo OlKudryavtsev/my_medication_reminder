@@ -340,15 +340,39 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
             med.default_dose = payload.dose
             med.active = True
         created_ids: list[int] = []
+        seen_entries: set[tuple[str, str]] = set()
         for entry in entries:
             hhmm = (entry.time_local or "").strip()
             if not hhmm or ":" not in hhmm:
                 continue
+            label = (entry.label or hhmm).strip()
+            entry_key = (hhmm, label)
+            if entry_key in seen_entries:
+                continue
+            seen_entries.add(entry_key)
+
+            existing = (await session.execute(
+                select(Schedule.id).where(
+                    Schedule.active == True,  # noqa: E712
+                    Schedule.medicine_id == med.id,
+                    Schedule.dose == payload.dose,
+                    Schedule.time_local == hhmm,
+                    Schedule.label == label,
+                    Schedule.start_date == start_date,
+                    Schedule.end_date == end_date,
+                    Schedule.recurrence_type == recurrence_type,
+                    Schedule.recurrence_interval_days == recurrence_interval_days,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                created_ids.append(existing)
+                continue
+
             sched = Schedule(
                 medicine_id=med.id,
                 dose=payload.dose,
                 time_local=hhmm,
-                label=(entry.label or hhmm).strip(),
+                label=label,
                 start_date=start_date,
                 end_date=end_date,
                 recurrence_type=recurrence_type,
