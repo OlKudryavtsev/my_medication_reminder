@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .bot import bot, dp, take_keyboard
+from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
 from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine
 from .service import (
@@ -126,20 +126,36 @@ async def reminder_tick() -> None:
     async with SessionLocal() as session:
         await ensure_events(session)
         due = await get_due_for_reminder(session)
+        groups: dict[datetime, list] = {}
         for event in due:
-            text = reminder_text(event)
-            recipients = []
-            if settings.child:
-                recipients.append(settings.child)
-            recipients.extend(settings.parents)
-            recipients = list(dict.fromkeys(recipients))
+            groups.setdefault(event.due_at, []).append(event)
+
+        recipients = []
+        if settings.child:
+            recipients.append(settings.child)
+        recipients.extend(settings.parents)
+        recipients = list(dict.fromkeys(recipients))
+
+        for due_at, events in groups.items():
+            if len(events) == 1:
+                event = events[0]
+                text = reminder_text(event)
+                keyboard = take_keyboard(event.id)
+            else:
+                group_key = group_key_for_due(due_at)
+                text = group_reminder_text(events)
+                keyboard = group_take_keyboard(group_key)
+
             for chat_id in recipients:
                 try:
-                    await bot.send_message(chat_id, text, reply_markup=take_keyboard(event.id))
+                    await bot.send_message(chat_id, text, reply_markup=keyboard)
                 except Exception:
                     pass
-            event.reminder_count += 1
-            event.last_reminded_at = datetime.now(TZ)
+
+            now = datetime.now(TZ)
+            for event in events:
+                event.reminder_count += 1
+                event.last_reminded_at = now
         await session.commit()
 
 

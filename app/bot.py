@@ -25,6 +25,11 @@ from .service import (
     thanks_text,
     skip_text,
     get_event,
+    group_key_for_due,
+    get_pending_group_by_key,
+    mark_group_taken,
+    mark_group_skipped,
+    snooze_group,
     get_stats,
     get_history_for_medicine,
     parse_date_or_none,
@@ -38,6 +43,7 @@ TZ = ZoneInfo(settings.timezone)
 
 class TakeStates(StatesGroup):
     waiting_actual_time = State()
+    waiting_group_actual_time = State()
 
 
 def role_for(tg_id: int) -> str:
@@ -103,6 +109,28 @@ def take_keyboard(event_id: int) -> InlineKeyboardMarkup:
         ],
     ])
 
+
+
+def group_take_keyboard(group_key: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Выпили все", callback_data=f"takegrpask:{group_key}"),
+            InlineKeyboardButton(text="😴 Отложить все 30 мин", callback_data=f"snoozegrp:{group_key}"),
+        ],
+        [
+            InlineKeyboardButton(text="⏭️ Пропущено все", callback_data=f"skipgrp:{group_key}"),
+            InlineKeyboardButton(text="📋 Сегодня", callback_data="today"),
+        ],
+    ])
+
+
+def choose_group_time_keyboard(group_key: int, scheduled_hhmm: str) -> InlineKeyboardMarkup:
+    now_hhmm = datetime.now(TZ).strftime("%H:%M")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"Сейчас: {now_hhmm}", callback_data=f"takegrp:{group_key}:now")],
+        [InlineKeyboardButton(text=f"По расписанию: {scheduled_hhmm}", callback_data=f"takegrp:{group_key}:scheduled")],
+        [InlineKeyboardButton(text="✍️ Ввести время", callback_data=f"takemanualgrp:{group_key}")],
+    ])
 
 def choose_time_keyboard(event_id: int, scheduled_hhmm: str) -> InlineKeyboardMarkup:
     now_hhmm = datetime.now(TZ).strftime("%H:%M")
@@ -267,6 +295,148 @@ async def add(message: Message) -> None:
         await ensure_events(session)
     await message.answer(f"Добавил: {name} — {dose} в {hhmm} ✅")
 
+
+
+@dp.callback_query(F.data.startswith("takegrpask:"))
+async def take_group_ask(callback: CallbackQuery) -> None:
+    if await deny_unknown_callback(callback):
+        return
+    group_key = int(callback.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        events = await get_pending_group_by_key(session, group_key)
+    if not events:
+        await callback.answer("В этой группе уже нет непринятых приемов", show_alert=True)
+        return
+    scheduled = events[0].due_at.astimezone(TZ).strftime("%H:%M")
+    meds = "\n".join(f"• {event_title(e)}" for e in events)
+    await callback.message.answer(
+        f"Когда фактически приняты лекарства?\n{meds}",
+        reply_markup=choose_group_time_keyboard(group_key, scheduled),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("takegrp:"))
+async def take_group(callback: CallbackQuery) -> None:
+    if await deny_unknown_callback(callback):
+        return
+    _, group_key_raw, mode = callback.data.split(":", 2)
+    group_key = int(group_key_raw)
+    actual_time = None
+    async with SessionLocal() as session:
+        events_before = await get_pending_group_by_key(session, group_key)
+        if not events_before:
+            await callback.answer("В этой группе уже нет непринятых приемов", show_alert=True)
+            return
+        if mode == "scheduled":
+            actual_time = events_before[0].due_at.astimezone(TZ).strftime("%H:%M")
+        events = await mark_group_taken(session, group_key, callback.from_user.id, actual_time=actual_time)
+    if not events:
+        await callback.answer("В этой группе уже нет непринятых приемов", show_alert=True)
+        return
+    thanks = thanks_text(sum(e.id for e in events))
+    actual = events[0].taken_at.astimezone(TZ).strftime("%H:%M") if events[0].taken_at else datetime.now(TZ).strftime("%H:%M")
+    await callback.message.answer(f"{thanks}\n\n✅ Отмечено приемов: {len(events)}. Фактическое время: {actual}")
+    who = callback.from_user.full_name or str(callback.from_user.id)
+    meds = "\n".join(f"• {event_title(e)}" for e in events)
+    notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {actual}"
+    for parent_id in settings.parents:
+        if parent_id != callback.from_user.id:
+            try:
+                await bot.send_message(parent_id, notify)
+            except Exception:
+                pass
+    if settings.child and settings.child != callback.from_user.id:
+        try:
+            await bot.send_message(settings.child, thanks)
+        except Exception:
+            pass
+    await callback.answer("Группа отмечена")
+
+
+@dp.callback_query(F.data.startswith("takemanualgrp:"))
+async def take_group_manual(callback: CallbackQuery, state: FSMContext) -> None:
+    if await deny_unknown_callback(callback):
+        return
+    group_key = int(callback.data.split(":", 1)[1])
+    await state.set_state(TakeStates.waiting_group_actual_time)
+    await state.update_data(group_key=group_key)
+    await callback.message.answer("Введите фактическое время группового приема в формате HH:MM, например 08:17")
+    await callback.answer()
+
+
+@dp.message(TakeStates.waiting_group_actual_time)
+async def take_group_manual_time(message: Message, state: FSMContext) -> None:
+    await upsert_user(message)
+    if await deny_unknown_message(message):
+        await state.clear()
+        return
+    hhmm = message.text.strip()
+    try:
+        h, m = hhmm.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError
+    except Exception:
+        await message.answer("Нужен формат HH:MM, например 08:17")
+        return
+    data = await state.get_data()
+    group_key = int(data["group_key"])
+    async with SessionLocal() as session:
+        events = await mark_group_taken(session, group_key, message.from_user.id, actual_time=hhmm)
+    await state.clear()
+    if not events:
+        await message.answer("В этой группе уже нет непринятых приемов.")
+        return
+    thanks = thanks_text(sum(e.id for e in events))
+    await message.answer(f"{thanks}\n\n✅ Отмечено приемов: {len(events)}. Фактическое время: {hhmm}")
+    who = message.from_user.full_name or str(message.from_user.id)
+    meds = "\n".join(f"• {event_title(e)}" for e in events)
+    notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {hhmm}"
+    for parent_id in settings.parents:
+        if parent_id != message.from_user.id:
+            try:
+                await bot.send_message(parent_id, notify)
+            except Exception:
+                pass
+
+
+@dp.callback_query(F.data.startswith("skipgrp:"))
+async def skip_group(callback: CallbackQuery) -> None:
+    if await deny_unknown_callback(callback):
+        return
+    group_key = int(callback.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        events = await mark_group_skipped(session, group_key, callback.from_user.id)
+    if not events:
+        await callback.answer("В этой группе уже нет непринятых приемов", show_alert=True)
+        return
+    text = skip_text(sum(e.id for e in events))
+    await callback.message.answer(f"{text}\n\n⏭️ Пропущено приемов: {len(events)}")
+    who = callback.from_user.full_name or str(callback.from_user.id)
+    meds = "\n".join(f"• {event_title(e)}" for e in events)
+    notify = f"⏭️ {who} отметил групповой пропуск ({len(events)}):\n{meds}"
+    for parent_id in settings.parents:
+        if parent_id != callback.from_user.id:
+            try:
+                await bot.send_message(parent_id, notify)
+            except Exception:
+                pass
+    await callback.answer("Группа отмечена как пропущенная")
+
+
+@dp.callback_query(F.data.startswith("snoozegrp:"))
+async def snooze_group_cb(callback: CallbackQuery) -> None:
+    if await deny_unknown_callback(callback):
+        return
+    group_key = int(callback.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        events = await snooze_group(session, group_key, callback.from_user.id, settings.snooze_minutes)
+    if not events:
+        await callback.answer("В этой группе уже нет непринятых приемов", show_alert=True)
+        return
+    until = events[0].postponed_until.astimezone(TZ).strftime("%H:%M") if events[0].postponed_until else "позже"
+    await callback.message.answer(f"😴 Отложено приемов: {len(events)} до {until}. Аптечный будильник ушел на паузу.")
+    await callback.answer("Группа отложена")
 
 @dp.callback_query(F.data.startswith("takeask:"))
 async def take_ask(callback: CallbackQuery) -> None:

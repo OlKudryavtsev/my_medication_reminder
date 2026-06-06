@@ -189,6 +189,101 @@ def reminder_text(event: DoseEvent) -> str:
     return REMINDER_TEMPLATES[idx].format(title=event_title(event)) + postponed
 
 
+
+
+def group_key_for_due(due_at: datetime) -> int:
+    """Stable callback key for a dose time group."""
+    return int(due_at.astimezone(TZ).timestamp())
+
+
+def group_due_from_key(group_key: int) -> datetime:
+    return datetime.fromtimestamp(int(group_key), TZ)
+
+
+def group_reminder_text(events: list[DoseEvent]) -> str:
+    """One compact reminder for all pending medicines scheduled for the same time."""
+    events = sorted(events, key=lambda e: (e.schedule.medicine.name, e.schedule.dose or ""))
+    first = events[0]
+    hhmm = first.due_at.astimezone(TZ).strftime("%H:%M")
+    lines = [f"💊 Пора принять лекарства на {hhmm}:"]
+    for event in events:
+        sched = event.schedule
+        dose = sched.dose or sched.medicine.default_dose
+        label = f" — {sched.label}" if sched.label and sched.label != sched.time_local else ""
+        lines.append(f"• {sched.medicine.name} — {dose}{label}")
+    if any(e.postponed_until for e in events):
+        postponed_to = max(e.postponed_until for e in events if e.postponed_until)
+        lines.append(f"\n⏰ Группа была отложена до {postponed_to.astimezone(TZ).strftime('%H:%M')}.")
+    idx = (sum(e.id for e in events) + sum(e.reminder_count for e in events)) % len(REMINDER_TEMPLATES)
+    joke = REMINDER_TEMPLATES[idx].format(title="этот аптечный набор")
+    return joke + "\n\n" + "\n".join(lines)
+
+
+async def get_pending_group_by_key(session: AsyncSession, group_key: int) -> list[DoseEvent]:
+    due = group_due_from_key(group_key)
+    start = due - timedelta(seconds=1)
+    end = due + timedelta(seconds=1)
+    q = select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
+        Schedule.active == True,  # noqa: E712
+        DoseEvent.status == "pending",
+        DoseEvent.due_at >= start,
+        DoseEvent.due_at <= end,
+    ).order_by(DoseEvent.due_at, DoseEvent.id)
+    return list((await session.execute(q)).scalars().all())
+
+
+async def mark_group_taken(
+    session: AsyncSession,
+    group_key: int,
+    tg_id: int,
+    actual_time: str | None = None,
+) -> list[DoseEvent]:
+    events = await get_pending_group_by_key(session, group_key)
+    if not events:
+        return []
+    actual_dt = local_dt(events[0].due_at.astimezone(TZ).date(), actual_time) if actual_time else datetime.now(TZ)
+    for event in events:
+        event.status = "taken"
+        event.taken_at = actual_dt
+        event.taken_by = tg_id
+        event.skipped_at = None
+        event.skipped_by = None
+        event.postponed_until = None
+        event.note = f"Групповая отметка пользователем {tg_id}"
+    await session.commit()
+    return events
+
+
+async def mark_group_skipped(session: AsyncSession, group_key: int, tg_id: int) -> list[DoseEvent]:
+    events = await get_pending_group_by_key(session, group_key)
+    if not events:
+        return []
+    now = datetime.now(TZ)
+    for event in events:
+        event.status = "skipped"
+        event.skipped_at = now
+        event.skipped_by = tg_id
+        event.taken_at = None
+        event.taken_by = None
+        event.postponed_until = None
+        event.note = f"Групповой пропуск пользователем {tg_id}"
+    await session.commit()
+    return events
+
+
+async def snooze_group(session: AsyncSession, group_key: int, tg_id: int, minutes: int | None = None) -> list[DoseEvent]:
+    events = await get_pending_group_by_key(session, group_key)
+    if not events:
+        return []
+    until = datetime.now(TZ) + timedelta(minutes=minutes or settings.snooze_minutes)
+    for event in events:
+        event.status = "pending"
+        event.postponed_until = until
+        event.last_reminded_at = until
+        event.note = f"Групповое отложение пользователем {tg_id}"
+    await session.commit()
+    return events
+
 def thanks_text(event_id: int | None = None) -> str:
     base = event_id or int(datetime.now(TZ).timestamp())
     return THANKS_TEMPLATES[base % len(THANKS_TEMPLATES)]
