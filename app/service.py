@@ -247,6 +247,49 @@ async def update_taken_time(session: AsyncSession, event_id: int, tg_id: int, ac
     return event
 
 
+
+
+async def set_event_status(
+    session: AsyncSession,
+    event_id: int,
+    tg_id: int,
+    status: str,
+    actual_time: str | None = None,
+) -> DoseEvent | None:
+    event = await get_event(session, event_id)
+    if not event:
+        return None
+    if status == "pending":
+        event.status = "pending"
+        event.taken_at = None
+        event.taken_by = None
+        event.skipped_at = None
+        event.skipped_by = None
+        event.postponed_until = None
+        event.note = f"Статус изменен пользователем {tg_id}"
+    elif status == "taken":
+        actual_dt = local_dt(event.due_at.astimezone(TZ).date(), actual_time) if actual_time else datetime.now(TZ)
+        event.status = "taken"
+        event.taken_at = actual_dt
+        event.taken_by = tg_id
+        event.skipped_at = None
+        event.skipped_by = None
+        event.postponed_until = None
+        event.note = f"Статус изменен пользователем {tg_id}"
+    elif status == "skipped":
+        event.status = "skipped"
+        event.skipped_at = datetime.now(TZ)
+        event.skipped_by = tg_id
+        event.taken_at = None
+        event.taken_by = None
+        event.postponed_until = None
+        event.note = f"Статус изменен пользователем {tg_id}"
+    else:
+        return None
+    await session.commit()
+    return event
+
+
 async def update_schedule(
     session: AsyncSession,
     schedule_id: int,

@@ -30,6 +30,7 @@ from .service import (
     mark_skipped,
     snooze_event,
     update_taken_time,
+    set_event_status,
     update_schedule,
     thanks_text,
     get_stats,
@@ -60,6 +61,11 @@ class TakePayload(BaseModel):
 
 class EventActionPayload(BaseModel):
     note: str = ""
+
+
+class StatusPayload(BaseModel):
+    status: str
+    actual_time: str | None = None
 
 
 def role_for_tg_id(tg_id: int | None) -> str:
@@ -223,6 +229,32 @@ async def api_update_taken_time(event_id: int, payload: TakePayload, request: Re
             except Exception:
                 pass
     return {"ok": True, "message": f"Время изменено на {actual}"}
+
+
+
+
+@app.patch("/api/events/{event_id}/status")
+async def api_update_event_status(event_id: int, payload: StatusPayload, request: Request):
+    tg_id, _ = require_known(request)
+    status = (payload.status or "").strip().lower()
+    if status not in {"pending", "taken", "skipped"}:
+        raise HTTPException(status_code=400, detail="status must be pending, taken or skipped")
+    if status == "taken" and payload.actual_time and not payload.actual_time.count(":") == 1:
+        raise HTTPException(status_code=400, detail="actual_time must be HH:MM")
+    async with SessionLocal() as session:
+        event = await set_event_status(session, event_id, tg_id, status, payload.actual_time)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    label = {"pending": "не принято", "taken": "принято", "skipped": "пропущено"}[status]
+    actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else ""
+    for parent_id in settings.parents:
+        if parent_id != tg_id:
+            try:
+                extra = f"\nФактическое время: {actual}" if status == "taken" and actual else ""
+                await bot.send_message(parent_id, f"✏️ В мини-приложении изменен статус: {event_title(event)}\nНовый статус: {label}{extra}")
+            except Exception:
+                pass
+    return {"ok": True, "message": f"Статус изменен: {label}"}
 
 
 @app.post("/api/events/{event_id}/skip")
