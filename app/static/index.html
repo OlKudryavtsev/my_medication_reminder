@@ -221,6 +221,7 @@
     if(name==='assignments'){loadCourses();}
     if(name==='meds'){loadCourses();loadSchedules();loadAudit();}
     if(name==='profiles'){loadProfileAdmin();}
+    if(name==='inventory'){loadInventory();}
   }
   function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin'){showAdminTab(currentAdminTab||'assignments');}window.scrollTo({top:0,behavior:'smooth'});}
   function setTodayFilter(f){todayFilter=f;localStorage.setItem('todayFilter',f);renderToday()}
@@ -321,6 +322,7 @@
     addInventoryOpen=!addInventoryOpen;
     document.getElementById('addInventoryForm')?.classList.toggle('hidden', !addInventoryOpen);
     setCollapseButton('addInventoryToggle', addInventoryOpen, 'Скрыть форму добавления', 'Добавить в аптечку');
+    if(addInventoryOpen) populateInventoryMedicineSelect();
   }
   function populateMedicineFilter(selectId, rows, getName){
     const sel=document.getElementById(selectId); if(!sel)return '';

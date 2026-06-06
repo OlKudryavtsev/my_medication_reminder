@@ -919,7 +919,23 @@ async def api_delete_schedule(schedule_id: int, request: Request):
 async def api_inventory(request: Request, search: str = ""):
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile_manager(request, session)
-        rows = await get_inventory(session, profile_id, search=search.strip())
+        search_text = search.strip()
+        rows = await get_inventory(session, profile_id, search=search_text)
+
+        # Backward compatibility: older versions could create stock records before
+        # profile binding became strict. Show such legacy records in the selected
+        # profile instead of making the user think the аптечка is empty.
+        if not rows:
+            legacy_q = select(InventoryItem).where(InventoryItem.active == True, InventoryItem.profile_id.is_(None))  # noqa: E712
+            if search_text:
+                legacy_q = legacy_q.where(InventoryItem.name.ilike(f"%{search_text}%"))
+            legacy = list((await session.execute(legacy_q.order_by(InventoryItem.name))).scalars().all())
+            for item in legacy:
+                item.profile_id = profile_id
+            if legacy:
+                await session.commit()
+                rows = legacy
+
         return [{
             "id": r.id,
             "name": r.name,
@@ -1102,25 +1118,62 @@ async def api_medicines(request: Request):
 
 @app.get("/api/medicine-options", response_class=ORJSONResponse)
 async def api_medicine_options(request: Request):
-    """Names available for admin pickers.
+    """Medicine names for dropdowns.
 
-    Uses the selected profile and returns a union of medicines from the active
-    schedule and already-created inventory items. This keeps the inventory form
-    usable even if a profile has stock records but no active schedule yet.
+    The Аптечка form must not become unusable if the selected profile has no
+    schedule yet or if older stock records were created without profile binding.
+    Therefore the list is intentionally built from several safe sources:
+    selected profile schedule, already-created stock records for accessible
+    profiles, legacy profile-less stock records, and the global medicine
+    dictionary.
     """
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile_manager(request, session)
+        profiles = await profiles_for_user(session, tg_id, role)
+        accessible_ids = {p.id for p in profiles}
+        accessible_ids.add(profile_id)
         names: set[str] = set()
+
+        # 1) Active schedule of the selected profile.
         sched_rows = (await session.execute(
             select(Medicine.name)
             .join(Schedule, Schedule.medicine_id == Medicine.id)
             .where(Medicine.active == True, Schedule.active == True, Schedule.profile_id == profile_id)  # noqa: E712
         )).scalars().all()
         names.update([n for n in sched_rows if n])
-        inv_rows = (await session.execute(
-            select(InventoryItem.name).where(InventoryItem.active == True, InventoryItem.profile_id == profile_id)  # noqa: E712
+
+        # 2) Stock items for all profiles accessible to the current user.
+        if accessible_ids:
+            inv_rows = (await session.execute(
+                select(InventoryItem.name).where(
+                    InventoryItem.active == True,  # noqa: E712
+                    InventoryItem.profile_id.in_(accessible_ids),
+                )
+            )).scalars().all()
+            names.update([n for n in inv_rows if n])
+
+        # 3) Legacy stock items without profile_id. Bind them to the selected
+        # profile immediately so they are displayed by /api/inventory as well.
+        legacy_items = (await session.execute(
+            select(InventoryItem).where(InventoryItem.active == True, InventoryItem.profile_id.is_(None))  # noqa: E712
         )).scalars().all()
-        names.update([n for n in inv_rows if n])
+        changed = False
+        for item in legacy_items:
+            if item.name:
+                names.add(item.name)
+            item.profile_id = profile_id
+            changed = True
+        if changed:
+            await session.commit()
+
+        # 4) Global dictionary of medicines. This keeps the dropdown populated
+        # even when a medicine exists in the system but is not yet scheduled in
+        # the selected profile.
+        all_meds = (await session.execute(
+            select(Medicine.name).where(Medicine.active == True).order_by(Medicine.name)  # noqa: E712
+        )).scalars().all()
+        names.update([n for n in all_meds if n])
+
         return [{"name": n} for n in sorted(names, key=lambda x: x.lower())]
 
 
