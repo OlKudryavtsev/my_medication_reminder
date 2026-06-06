@@ -115,7 +115,7 @@
             <div class="searchFilter"><label>Фильтр по лекарству</label><select id="inventorySearch" class="searchSelect" onchange="loadInventory()"><option value="">Все лекарства</option></select></div>
             <button id="addInventoryToggle" class="collapseToggle" onclick="toggleAddInventoryForm()"><span>Добавить в аптечку</span><span class="chev">＋</span></button>
             <div id="addInventoryForm" class="addForm hidden">
-              <div class="fieldLine"><label>Лекарство</label><select id="invName"><option value="">Выберите лекарство</option></select></div>
+              <div class="fieldLine"><label>Лекарство</label><select id="invName" onchange="toggleInventoryManualName()"><option value="">Выберите лекарство</option></select></div><div class="fieldLine invManualLine hidden" id="invManualLine"><label>Или вручную</label><input id="invNameManual" placeholder="Название лекарства"></div>
               <div class="fieldLine"><label>Остаток</label><input id="invQty" type="number" min="0" value="0"></div>
               <div class="fieldLine"><label>Ед. изм.</label><input id="invUnit" value="шт"></div>
               <div class="fieldLine"><label>Напомнить при</label><input id="invThreshold" type="number" min="0" value="5"></div>
@@ -331,14 +331,26 @@
     else sel.value='';
     return sel.value || '';
   }
+  function toggleInventoryManualName(){
+    const sel=document.getElementById('invName');
+    const line=document.getElementById('invManualLine');
+    if(!sel||!line)return;
+    line.classList.toggle('hidden', !!sel.value);
+  }
   async function populateInventoryMedicineSelect(){
     const sel=document.getElementById('invName'); if(!sel)return;
     const current=sel.value || '';
-    let rows=[];
-    try{ rows=await api('/api/schedules'); }catch(e){ rows=[]; }
-    const names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    let names=[];
+    try{
+      const rows=await api('/api/medicine-options');
+      names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    }catch(e){
+      names=[];
+    }
     sel.innerHTML='<option value="">Выберите лекарство</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
     if(current && names.includes(current)) sel.value=current;
+    else sel.value='';
+    toggleInventoryManualName();
   }
   function attachmentUrl(id){return `/api/attachments/${id}?profile_id=${currentProfileId||''}`}
   function inventoryPhotoUrl(i){return `${i.photo_url}?profile_id=${currentProfileId||''}&t=${Date.now()}`}
@@ -450,7 +462,7 @@
     if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
     root.innerHTML=`<div class="adminList">${rows.map(i=>`<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div><div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div></div>`).join('')}</div>`;
   }
-  async function addInventory(){const name=document.getElementById('invName').value;if(!name){toast('Выберите лекарство из списка');return}const res=await api('/api/inventory',{method:'POST',body:JSON.stringify({name,quantity:Number(document.getElementById('invQty').value||0),unit_name:document.getElementById('invUnit').value||'шт',low_threshold:Number(document.getElementById('invThreshold').value||0)})});const file=document.getElementById('invPhoto').files[0];if(file)await uploadInventoryPhoto(res.id,file,false);document.getElementById('invName').value='';document.getElementById('invPhoto').value='';document.getElementById('invQty').value='0';toast('Добавлено в аптечку');addInventoryOpen=false;document.getElementById('addInventoryForm')?.classList.add('hidden');setCollapseButton('addInventoryToggle', false, 'Скрыть форму добавления', 'Добавить в аптечку');await loadInventory();await loadAudit()}
+  async function addInventory(){const selected=document.getElementById('invName')?.value||'';const manual=document.getElementById('invNameManual')?.value.trim()||'';const name=selected||manual;if(!name){toast('Выберите лекарство из списка или введите название вручную');return}const res=await api('/api/inventory',{method:'POST',body:JSON.stringify({name,quantity:Number(document.getElementById('invQty').value||0),unit_name:document.getElementById('invUnit').value||'шт',low_threshold:Number(document.getElementById('invThreshold').value||0)})});const file=document.getElementById('invPhoto').files[0];if(file)await uploadInventoryPhoto(res.id,file,false);document.getElementById('invName').value='';const manualEl=document.getElementById('invNameManual');if(manualEl)manualEl.value='';document.getElementById('invPhoto').value='';document.getElementById('invQty').value='0';toggleInventoryManualName();toast('Добавлено в аптечку');addInventoryOpen=false;document.getElementById('addInventoryForm')?.classList.add('hidden');setCollapseButton('addInventoryToggle', false, 'Скрыть форму добавления', 'Добавить в аптечку');await loadInventory();await loadAudit()}
   async function editInventory(id,name,qty,unit,thr){const body=`<label>Лекарство</label><input id="eiName" value="${name}" readonly><label>Остаток</label><input id="eiQty" type="number" min="0" value="${qty}"><label>Ед. изм.</label><input id="eiUnit" value="${unit}"><label>Напомнить при</label><input id="eiThr" type="number" min="0" value="${thr}">`;const ok=await openModal('Изменить запас', body, ()=>closeModal({name:document.getElementById('eiName').value.trim(),quantity:Number(document.getElementById('eiQty').value||0),unit_name:document.getElementById('eiUnit').value||'шт',low_threshold:Number(document.getElementById('eiThr').value||0)}));if(!ok)return;await api('/api/inventory/'+id,{method:'PUT',body:JSON.stringify(ok)});toast('Запас обновлен');await loadInventory();await loadAudit()}
   async function deleteInventory(id){const ok=await confirmAction('Удалить из аптечки?', 'Запись о запасе лекарства будет скрыта.');if(!ok)return;await api('/api/inventory/'+id,{method:'DELETE'});toast('Удалено из аптечки');await loadInventory();await loadAudit()}
   async function uploadInventoryPhoto(id,file,reload=true){if(!file)return;const fd=new FormData();fd.append('file',file);await api('/api/inventory/'+id+'/photo',{method:'POST',body:fd,headers:{}});toast('Фото сохранено');if(reload)await loadInventory()}

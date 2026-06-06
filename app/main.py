@@ -1100,6 +1100,30 @@ async def api_medicines(request: Request):
         return [{"id": m.id, "name": m.name} for m in rows]
 
 
+@app.get("/api/medicine-options", response_class=ORJSONResponse)
+async def api_medicine_options(request: Request):
+    """Names available for admin pickers.
+
+    Uses the selected profile and returns a union of medicines from the active
+    schedule and already-created inventory items. This keeps the inventory form
+    usable even if a profile has stock records but no active schedule yet.
+    """
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        names: set[str] = set()
+        sched_rows = (await session.execute(
+            select(Medicine.name)
+            .join(Schedule, Schedule.medicine_id == Medicine.id)
+            .where(Medicine.active == True, Schedule.active == True, Schedule.profile_id == profile_id)  # noqa: E712
+        )).scalars().all()
+        names.update([n for n in sched_rows if n])
+        inv_rows = (await session.execute(
+            select(InventoryItem.name).where(InventoryItem.active == True, InventoryItem.profile_id == profile_id)  # noqa: E712
+        )).scalars().all()
+        names.update([n for n in inv_rows if n])
+        return [{"name": n} for n in sorted(names, key=lambda x: x.lower())]
+
+
 @app.get("/api/medicines/{medicine_id}/history", response_class=ORJSONResponse)
 async def api_medicine_history(medicine_id: int, request: Request, days: int = 30):
     async with SessionLocal() as session:
