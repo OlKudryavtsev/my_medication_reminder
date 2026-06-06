@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -44,6 +44,11 @@ from .service import (
     set_active_profile,
     is_profile_manager,
     profile_recipients,
+    create_child_profile,
+    update_profile_name,
+    deactivate_profile,
+    get_audit_log,
+    log_action,
 )
 
 settings = get_settings()
@@ -75,6 +80,11 @@ class TakePayload(BaseModel):
     actual_time: str | None = None
 
 
+class BatchEventPayload(BaseModel):
+    ids: list[int]
+    actual_time: str | None = None
+
+
 class EventActionPayload(BaseModel):
     note: str = ""
 
@@ -86,6 +96,10 @@ class StatusPayload(BaseModel):
 
 class ActiveProfilePayload(BaseModel):
     profile_id: int
+
+
+class ProfilePayload(BaseModel):
+    name: str
 
 
 def role_for_tg_id(tg_id: int | None) -> str:
@@ -258,6 +272,59 @@ async def api_active_profile(payload: ActiveProfilePayload, request: Request):
         return {"ok": True, "profile_id": profile.id, "name": profile.name}
 
 
+@app.post("/api/profiles")
+async def api_create_profile(payload: ProfilePayload, request: Request):
+    tg_id = require_parent(request)
+    async with SessionLocal() as session:
+        profile = await create_child_profile(session, payload.name, tg_id)
+        return {"ok": True, "id": profile.id, "name": profile.name, "kind": profile.kind}
+
+
+@app.put("/api/profiles/{profile_id}")
+async def api_update_profile(profile_id: int, payload: ProfilePayload, request: Request):
+    tg_id = require_parent(request)
+    async with SessionLocal() as session:
+        # Родитель может переименовывать детские профили и свой личный профиль.
+        profiles = await profiles_for_user(session, tg_id, "parent")
+        allowed = {p.id for p in profiles}
+        if profile_id not in allowed:
+            raise HTTPException(status_code=403, detail="Profile is not accessible")
+        profile = await update_profile_name(session, profile_id, payload.name, tg_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return {"ok": True, "id": profile.id, "name": profile.name}
+
+
+@app.delete("/api/profiles/{profile_id}")
+async def api_delete_profile(profile_id: int, request: Request):
+    tg_id = require_parent(request)
+    async with SessionLocal() as session:
+        profile = (await session.execute(select(Profile).where(Profile.id == profile_id))).scalar_one_or_none()
+        if not profile or profile.kind != "child":
+            raise HTTPException(status_code=400, detail="Only child profiles can be deleted")
+        profile = await deactivate_profile(session, profile_id, tg_id)
+        return {"ok": True}
+
+
+@app.get("/api/audit", response_class=ORJSONResponse)
+async def api_audit(request: Request, limit: int = 50):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        rows = await get_audit_log(session, profile_id, limit=max(1, min(limit, 100)))
+        return [
+            {
+                "id": r.id,
+                "created_at": r.created_at.astimezone(TZ).strftime("%d.%m %H:%M") if r.created_at else "",
+                "actor_tg_id": r.actor_tg_id,
+                "action": r.action,
+                "entity_type": r.entity_type,
+                "entity_id": r.entity_id,
+                "details": r.details,
+            }
+            for r in rows
+        ]
+
+
 @app.get("/api/today", response_class=ORJSONResponse)
 async def api_today(request: Request):
     async with SessionLocal() as session:
@@ -281,12 +348,83 @@ async def api_today(request: Request):
         ]
 
 
+@app.post("/api/events/batch/take")
+async def api_batch_take(payload: BatchEventPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        ids = list(dict.fromkeys([int(x) for x in payload.ids if int(x) > 0]))
+        if not ids:
+            raise HTTPException(status_code=400, detail="ids are required")
+        rows = (await session.execute(
+            select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(DoseEvent.id.in_(ids), Schedule.profile_id == profile_id)
+        )).scalars().all()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Events not found")
+        taken_events = []
+        for event in rows:
+            if event.status == "pending":
+                event = await mark_taken(session, event.id, tg_id, actual_time=payload.actual_time)
+                if event:
+                    taken_events.append(event)
+        await log_action(session, profile_id, tg_id, "group_taken", "dose_event", taken_events[0].id if taken_events else None, f"Групповая отметка: {len(taken_events)} прием(а)", commit=True)
+    if taken_events:
+        actual = taken_events[0].taken_at.astimezone(TZ).strftime("%H:%M") if taken_events[0].taken_at else ""
+        async with SessionLocal() as session:
+            recipients = await profile_recipients(session, taken_events[0].schedule.profile_id)
+        lines = "\n".join(f"• {event_title(e)}" for e in taken_events)
+        for parent_id in recipients:
+            if parent_id != tg_id:
+                try:
+                    await bot.send_message(parent_id, f"✅ В мини-приложении отмечена группа приемов ({len(taken_events)}):\n{lines}\nФактическое время: {actual}")
+                except Exception:
+                    pass
+    return {"ok": True, "count": len(taken_events), "message": f"Отмечено приемов: {len(taken_events)}"}
+
+
+@app.post("/api/events/batch/skip")
+async def api_batch_skip(payload: BatchEventPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        ids = list(dict.fromkeys([int(x) for x in payload.ids if int(x) > 0]))
+        rows = (await session.execute(
+            select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(DoseEvent.id.in_(ids), Schedule.profile_id == profile_id)
+        )).scalars().all()
+        skipped=[]
+        for event in rows:
+            if event.status == "pending":
+                event = await mark_skipped(session, event.id, tg_id)
+                if event:
+                    skipped.append(event)
+        await log_action(session, profile_id, tg_id, "group_skipped", "dose_event", skipped[0].id if skipped else None, f"Групповой пропуск: {len(skipped)} прием(а)", commit=True)
+    return {"ok": True, "count": len(skipped), "message": f"Пропущено приемов: {len(skipped)}"}
+
+
+@app.post("/api/events/batch/snooze")
+async def api_batch_snooze(payload: BatchEventPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        ids = list(dict.fromkeys([int(x) for x in payload.ids if int(x) > 0]))
+        rows = (await session.execute(
+            select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(DoseEvent.id.in_(ids), Schedule.profile_id == profile_id)
+        )).scalars().all()
+        snoozed=[]
+        for event in rows:
+            if event.status == "pending":
+                event = await snooze_event(session, event.id, tg_id, settings.snooze_minutes)
+                if event:
+                    snoozed.append(event)
+        await log_action(session, profile_id, tg_id, "group_snoozed", "dose_event", snoozed[0].id if snoozed else None, f"Групповое отложение: {len(snoozed)} прием(а)", commit=True)
+    return {"ok": True, "count": len(snoozed), "message": f"Отложено приемов: {len(snoozed)}"}
+
+
 @app.post("/api/events/{event_id}/take")
 async def api_take(event_id: int, payload: TakePayload, request: Request):
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile(request, session)
         await assert_event_in_profile(session, event_id, profile_id)
         event = await mark_taken(session, event_id, tg_id, actual_time=payload.actual_time)
+        if event:
+            await log_action(session, profile_id, tg_id, "event_taken", "dose_event", event.id, event_title(event), commit=True)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     text = thanks_text(event.id)
@@ -311,6 +449,8 @@ async def api_update_taken_time(event_id: int, payload: TakePayload, request: Re
         tg_id, role, profile_id = await require_profile(request, session)
         await assert_event_in_profile(session, event_id, profile_id)
         event = await update_taken_time(session, event_id, tg_id, payload.actual_time)
+        if event:
+            await log_action(session, profile_id, tg_id, "event_time_changed", "dose_event", event.id, f"{event_title(event)} → {payload.actual_time}", commit=True)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else payload.actual_time
@@ -339,6 +479,8 @@ async def api_update_event_status(event_id: int, payload: StatusPayload, request
         tg_id, role, profile_id = await require_profile(request, session)
         await assert_event_in_profile(session, event_id, profile_id)
         event = await set_event_status(session, event_id, tg_id, status, payload.actual_time)
+        if event:
+            await log_action(session, profile_id, tg_id, "event_status_changed", "dose_event", event.id, f"{event_title(event)} → {status}", commit=True)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     label = {"pending": "не принято", "taken": "принято", "skipped": "пропущено"}[status]
@@ -361,6 +503,8 @@ async def api_skip(event_id: int, payload: EventActionPayload, request: Request)
         tg_id, role, profile_id = await require_profile(request, session)
         await assert_event_in_profile(session, event_id, profile_id)
         event = await mark_skipped(session, event_id, tg_id, note=payload.note)
+        if event:
+            await log_action(session, profile_id, tg_id, "event_skipped", "dose_event", event.id, event_title(event), commit=True)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     async with SessionLocal() as session:
@@ -380,6 +524,8 @@ async def api_snooze(event_id: int, payload: EventActionPayload, request: Reques
         tg_id, role, profile_id = await require_profile(request, session)
         await assert_event_in_profile(session, event_id, profile_id)
         event = await snooze_event(session, event_id, tg_id, settings.snooze_minutes)
+        if event:
+            await log_action(session, profile_id, tg_id, "event_snoozed", "dose_event", event.id, event_title(event), commit=True)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     until = event.postponed_until.astimezone(TZ).strftime("%H:%M") if event.postponed_until else ""
@@ -480,6 +626,7 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
             created_ids.append(sched.id)
         if not created_ids:
             raise HTTPException(status_code=400, detail="No valid time entries")
+        await log_action(session, profile_id, tg_id, "schedule_created", "schedule", created_ids[0], f"{payload.name} — {payload.dose}; приемов: {len(created_ids)}")
         await session.commit()
         await ensure_events(session)
         return {"ok": True, "ids": created_ids, "count": len(created_ids)}
@@ -509,6 +656,7 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
         )
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
+        await log_action(session, profile_id, tg_id, "schedule_updated", "schedule", schedule_id, f"{payload.name} — {payload.dose}; {payload.time_local}", commit=True)
         return {"ok": True}
 
 
@@ -520,6 +668,7 @@ async def api_delete_schedule(schedule_id: int, request: Request):
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
         sched.active = False
+        await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален прием из расписания", commit=False)
         await session.commit()
         return {"ok": True}
 

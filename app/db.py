@@ -88,6 +88,18 @@ class DoseEvent(Base):
     schedule: Mapped[Schedule] = relationship()
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    actor_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(80), default="")
+    entity_type: Mapped[str] = mapped_column(String(40), default="")
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    details: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 async def _column_exists(conn, table: str, column: str) -> bool:
     result = await conn.execute(text("""
         SELECT COUNT(*)

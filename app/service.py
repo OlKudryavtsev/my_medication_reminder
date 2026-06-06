@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent, Profile, User
+from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
@@ -65,12 +65,19 @@ async def get_child_profile(session: AsyncSession) -> Profile | None:
 async def profiles_for_user(session: AsyncSession, tg_id: int, role: str) -> list[Profile]:
     await ensure_profiles(session)
     if role == "parent":
+        # Родитель видит все детские профили и свой личный профиль.
         q = select(Profile).where(
             Profile.active == True,
             or_(Profile.kind == "child", Profile.owner_tg_id == tg_id),
         ).order_by(Profile.kind, Profile.id)
     elif role == "child":
-        q = select(Profile).where(Profile.active == True, Profile.kind == "child").order_by(Profile.id)
+        # Ребенок управляет своим детским профилем. Если детских профилей несколько,
+        # показываем первый профиль, привязанный к CHILD_CHAT_ID, либо первый активный детский.
+        q = select(Profile).where(
+            Profile.active == True,
+            Profile.kind == "child",
+            or_(Profile.owner_tg_id == tg_id, Profile.owner_tg_id.is_(None)),
+        ).order_by(Profile.owner_tg_id.desc(), Profile.id)
     else:
         return []
     return list((await session.execute(q)).scalars().all())
@@ -116,6 +123,69 @@ async def profile_recipients(session: AsyncSession, profile_id: int) -> list[int
         recipients.append(settings.child)
     recipients.extend(settings.parents)
     return list(dict.fromkeys(recipients))
+
+
+async def log_action(
+    session: AsyncSession,
+    profile_id: int | None,
+    actor_tg_id: int | None,
+    action: str,
+    entity_type: str = "",
+    entity_id: int | None = None,
+    details: str = "",
+    commit: bool = False,
+) -> AuditLog:
+    row = AuditLog(
+        profile_id=profile_id,
+        actor_tg_id=actor_tg_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        details=details[:2000] if details else "",
+    )
+    session.add(row)
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
+    return row
+
+
+async def create_child_profile(session: AsyncSession, name: str, actor_tg_id: int) -> Profile:
+    profile = Profile(name=name.strip() or "Ребенок", kind="child", owner_tg_id=None, active=True)
+    session.add(profile)
+    await session.flush()
+    await log_action(session, profile.id, actor_tg_id, "profile_created", "profile", profile.id, f"Создан детский профиль: {profile.name}")
+    await session.commit()
+    return profile
+
+
+async def update_profile_name(session: AsyncSession, profile_id: int, name: str, actor_tg_id: int) -> Profile | None:
+    profile = (await session.execute(select(Profile).where(Profile.id == profile_id, Profile.active == True))).scalar_one_or_none()
+    if not profile:
+        return None
+    old = profile.name
+    profile.name = name.strip() or profile.name
+    await log_action(session, profile.id, actor_tg_id, "profile_renamed", "profile", profile.id, f"{old} → {profile.name}")
+    await session.commit()
+    return profile
+
+
+async def deactivate_profile(session: AsyncSession, profile_id: int, actor_tg_id: int) -> Profile | None:
+    profile = (await session.execute(select(Profile).where(Profile.id == profile_id, Profile.active == True))).scalar_one_or_none()
+    if not profile:
+        return None
+    profile.active = False
+    await log_action(session, profile.id, actor_tg_id, "profile_deleted", "profile", profile.id, f"Профиль отключен: {profile.name}")
+    await session.commit()
+    return profile
+
+
+async def get_audit_log(session: AsyncSession, profile_id: int, limit: int = 50) -> list[AuditLog]:
+    rows = (await session.execute(
+        select(AuditLog).where(AuditLog.profile_id == profile_id).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit)
+    )).scalars().all()
+    return list(rows)
 
 
 SKIP_TEXTS = [
