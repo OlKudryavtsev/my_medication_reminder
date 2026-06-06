@@ -63,6 +63,8 @@ async def add_schedule(
     label: str = "",
     start_date: date | None = None,
     end_date: date | None = None,
+    recurrence_type: str = "daily",
+    recurrence_interval_days: int = 1,
 ) -> Schedule:
     med = await upsert_medicine(session, name, dose)
     item = Schedule(
@@ -72,6 +74,8 @@ async def add_schedule(
         label=label or hhmm,
         start_date=start_date,
         end_date=end_date,
+        recurrence_type=recurrence_type or "daily",
+        recurrence_interval_days=recurrence_interval_days or 1,
     )
     session.add(item)
     await session.flush()
@@ -114,6 +118,19 @@ async def seed_default_schedule(session: AsyncSession, replace: bool = False) ->
         await add_schedule(session, name, dose, hhmm, label, start_date=today, end_date=None)
 
 
+
+
+def schedule_applies_on_day(sched: Schedule, day: date) -> bool:
+    start = sched.start_date or datetime.now(TZ).date()
+    recurrence_type = (getattr(sched, "recurrence_type", None) or "daily")
+    interval = int(getattr(sched, "recurrence_interval_days", None) or 1)
+    if recurrence_type == "monthly":
+        return day.day == start.day
+    delta_days = (day - start).days
+    if delta_days < 0:
+        return False
+    return delta_days % max(1, interval) == 0
+
 async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
     today = datetime.now(TZ).date()
     schedules = (await session.execute(select(Schedule).where(Schedule.active == True))).scalars().all()  # noqa: E712
@@ -123,6 +140,8 @@ async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
             if sched.start_date and day < sched.start_date:
                 continue
             if sched.end_date and day > sched.end_date:
+                continue
+            if not schedule_applies_on_day(sched, day):
                 continue
             due = local_dt(day, sched.time_local)
             exists = (await session.execute(
@@ -299,6 +318,8 @@ async def update_schedule(
     label: str = "",
     start_date: date | None = None,
     end_date: date | None = None,
+    recurrence_type: str | None = None,
+    recurrence_interval_days: int | None = None,
 ) -> Schedule | None:
     sched = (await session.execute(
         select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.id == schedule_id)
@@ -312,6 +333,10 @@ async def update_schedule(
     sched.label = label or hhmm
     sched.start_date = start_date
     sched.end_date = end_date
+    if recurrence_type is not None:
+        sched.recurrence_type = recurrence_type or "daily"
+    if recurrence_interval_days is not None:
+        sched.recurrence_interval_days = recurrence_interval_days or 1
     sched.active = True
 
     # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.

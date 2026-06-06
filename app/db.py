@@ -52,6 +52,8 @@ class Schedule(Base):
     time_local: Mapped[str] = mapped_column(String(5))  # HH:MM
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    recurrence_type: Mapped[str] = mapped_column(String(20), default="daily")  # daily/weekly/monthly
+    recurrence_interval_days: Mapped[int] = mapped_column(Integer, default=1)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     medicine: Mapped[Medicine] = relationship()
 
@@ -104,6 +106,8 @@ async def run_light_migrations(conn) -> None:
     dt_type = "TIMESTAMP WITH TIME ZONE" if dialect != "sqlite" else "DATETIME"
     await _add_column_if_missing(conn, "schedules", "start_date", date_type)
     await _add_column_if_missing(conn, "schedules", "end_date", date_type)
+    await _add_column_if_missing(conn, "schedules", "recurrence_type", "VARCHAR(20) DEFAULT 'daily'")
+    await _add_column_if_missing(conn, "schedules", "recurrence_interval_days", "INTEGER DEFAULT 1")
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)

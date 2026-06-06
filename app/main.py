@@ -46,13 +46,21 @@ scheduler = AsyncIOScheduler(timezone=settings.timezone)
 polling_task: asyncio.Task | None = None
 
 
+class ScheduleEntryPayload(BaseModel):
+    time_local: str
+    label: str = ""
+
+
 class AddSchedulePayload(BaseModel):
     name: str
     dose: str
-    time_local: str
+    time_local: str | None = None
     label: str = ""
     start_date: str | None = None
     end_date: str | None = None
+    recurrence_type: str = "daily"
+    recurrence_interval_days: int = 1
+    entries: list[ScheduleEntryPayload] | None = None
 
 
 class TakePayload(BaseModel):
@@ -300,6 +308,8 @@ async def api_schedules(request: Request):
                 "label": r.label,
                 "start_date": r.start_date.isoformat() if r.start_date else "",
                 "end_date": r.end_date.isoformat() if r.end_date else "",
+                "recurrence_type": r.recurrence_type or "daily",
+                "recurrence_interval_days": r.recurrence_interval_days or 1,
                 "active": r.active,
             }
             for r in rows
@@ -311,24 +321,47 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
     require_parent(request)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
+    recurrence_type = (payload.recurrence_type or "daily").strip().lower()
+    recurrence_interval_days = int(payload.recurrence_interval_days or 1)
+    if recurrence_type not in {"daily", "weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="Unsupported recurrence_type")
+    entries = payload.entries or []
+    if not entries and payload.time_local:
+        entries = [ScheduleEntryPayload(time_local=payload.time_local, label=payload.label or payload.time_local)]
+    if not payload.name.strip() or not payload.dose.strip() or not entries:
+        raise HTTPException(status_code=400, detail="name, dose and at least one time are required")
     async with SessionLocal() as session:
         med = (await session.execute(select(Medicine).where(Medicine.name == payload.name))).scalar_one_or_none()
         if not med:
             med = Medicine(name=payload.name, default_dose=payload.dose)
             session.add(med)
             await session.flush()
-        sched = Schedule(
-            medicine_id=med.id,
-            dose=payload.dose,
-            time_local=payload.time_local,
-            label=payload.label or payload.time_local,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        session.add(sched)
+        else:
+            med.default_dose = payload.dose
+            med.active = True
+        created_ids: list[int] = []
+        for entry in entries:
+            hhmm = (entry.time_local or "").strip()
+            if not hhmm or ":" not in hhmm:
+                continue
+            sched = Schedule(
+                medicine_id=med.id,
+                dose=payload.dose,
+                time_local=hhmm,
+                label=(entry.label or hhmm).strip(),
+                start_date=start_date,
+                end_date=end_date,
+                recurrence_type=recurrence_type,
+                recurrence_interval_days=recurrence_interval_days,
+            )
+            session.add(sched)
+            await session.flush()
+            created_ids.append(sched.id)
+        if not created_ids:
+            raise HTTPException(status_code=400, detail="No valid time entries")
         await session.commit()
         await ensure_events(session)
-        return {"ok": True, "id": sched.id}
+        return {"ok": True, "ids": created_ids, "count": len(created_ids)}
 
 
 @app.put("/api/schedules/{schedule_id}")
@@ -346,6 +379,8 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
             label=payload.label or payload.time_local,
             start_date=start_date,
             end_date=end_date,
+            recurrence_type=payload.recurrence_type,
+            recurrence_interval_days=payload.recurrence_interval_days,
         )
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")

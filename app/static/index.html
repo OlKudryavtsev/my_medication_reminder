@@ -50,6 +50,7 @@
     .bottomTabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.88);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:7px max(9px,env(safe-area-inset-left)) calc(7px + env(safe-area-inset-bottom)) max(9px,env(safe-area-inset-right));display:flex;justify-content:center;gap:6px}[data-theme="dark"] .bottomTabs{background:rgba(22,27,34,.88)}
     .tab{max-width:720px;flex:1;border-radius:15px;background:transparent;color:var(--muted);box-shadow:none;padding:7px 3px;min-height:52px;font-size:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.tab svg{width:21px;height:21px;display:block;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tab.active{background:var(--brand2);color:var(--brand)}.hidden{display:none!important}.deny{background:#fff0f0;color:#7f1d1d;border:1px solid #ffd0d0}[data-theme="dark"] .deny{background:#33191b;color:#fecaca;border-color:#7f1d1d}
     .toast{position:fixed;left:12px;right:12px;bottom:calc(82px + env(safe-area-inset-bottom));background:#111827;color:white;border-radius:16px;padding:12px 13px;text-align:center;display:none;z-index:30;font-size:14px}.empty{text-align:center;color:var(--muted);padding:22px 8px}
+    .modal{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.28);display:flex;align-items:flex-end;justify-content:center;padding:16px 12px calc(16px + env(safe-area-inset-bottom))}.modal.hidden{display:none!important}.modalCard{width:min(520px,100%);background:var(--card);border:1px solid var(--line);border-radius:22px;padding:16px;box-shadow:0 20px 60px rgba(0,0,0,.22)}.modalCard h3{margin:0 0 12px;font-size:18px}.modalActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.statusChoice{display:grid;gap:8px}.statusOption{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--soft);font-weight:850}.statusOption input{width:auto;min-height:auto}.frequencySlots{display:grid;gap:8px;margin-top:4px}.slotRow{display:grid;grid-template-columns:112px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}.slotRow label{margin:0;font-size:9px;line-height:1.1;white-space:nowrap}.slotGroup{border:1px solid var(--line);border-radius:15px;padding:9px;background:rgba(127,127,127,.03)}.slotGroupTitle{font-size:11px;font-weight:850;color:var(--muted);margin-bottom:4px}
     @media(max-width:420px){.wrap{padding-left:10px;padding-right:10px}.top{margin-left:-10px;margin-right:-10px;padding-left:10px;padding-right:10px}.grid2,.grid3{grid-template-columns:1fr 1fr}.dose{grid-template-columns:46px minmax(0,1fr);gap:8px}.time{font-size:15px}.med{font-size:14px}.pendingActions{grid-template-columns:1fr 1fr 1fr;gap:5px}.pendingActions button{font-size:11px;padding-left:5px;padding-right:5px}.resultPill{padding:6px 8px}.editTimeBtn,.changeStatusBtn{font-size:11px!important;padding-left:6px!important;padding-right:6px!important}.filters{gap:4px}.filterBtn{font-size:10px;padding-left:1px;padding-right:1px}.card{padding:11px;border-radius:19px}.schedTop{grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,2.6fr);gap:6px}.schedDates{gap:6px}.fieldLine{grid-template-columns:106px minmax(0,1fr);gap:6px}.formrow{padding:8px}.formrow input{font-size:13px;padding-left:7px;padding-right:7px}.adminActions button{font-size:11px}.miniTable td,.miniTable th{font-size:12px;padding:8px 6px}.tab{font-size:9.5px}.sub{display:none}}
   </style>
 </head>
@@ -62,14 +63,21 @@
       <section id="pageStats" class="page hidden"><div class="card"><h2>Статистика за 30 дней</h2><div id="stats">Загрузка...</div></div></section>
       <section id="pageHistory" class="page hidden"><div class="card"><h2>История по препарату</h2><label>Препарат</label><select id="medicineSelect" onchange="loadHistory()"></select><div id="history" class="muted" style="margin-top:10px">Выберите препарат</div></div></section>
       <section id="pageAdmin" class="page hidden">
-        <div class="card"><h2>Добавить прием</h2>
+        <div class="card"><h2>Добавить лекарство</h2>
           <div class="addForm">
             <div class="fieldLine"><label>Лекарство</label><input id="name" placeholder="Аквадетрим" /></div>
             <div class="fieldLine"><label>Доза</label><input id="dose" placeholder="2 капли" /></div>
-            <div class="fieldLine"><label>Время</label><input id="time" type="time" value="09:00" /></div>
-            <div class="fieldLine"><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div>
+            <div class="fieldLine"><label>Периодичность</label><select id="frequency" onchange="renderFrequencySlots()">
+              <option value="daily:1:1">1 раз в день</option>
+              <option value="daily:1:2">2 раза в день</option>
+              <option value="daily:1:3">3 раза в день</option>
+              <option value="weekly:7:1">1 раз в неделю</option>
+              <option value="weekly:14:1">1 раз в 2 недели</option>
+              <option value="monthly:30:1">1 раз в месяц</option>
+            </select></div>
+            <div id="frequencySlots" class="frequencySlots"></div>
             <div class="dateLine"><div><label>Дата начала</label><input id="startDate" type="date" /></div><div><label>Дата окончания</label><input id="endDate" type="date" /></div></div>
-            <button class="wide" onclick="addSchedule()" style="margin-top:10px">Добавить</button>
+            <button class="wide" onclick="addSchedule()" style="margin-top:10px">Добавить лекарство</button>
           </div>
         </div>
         <div class="card"><h2>Текущее расписание</h2><div id="schedules">Загрузка...</div></div>
@@ -82,6 +90,13 @@
     <button id="tabHistory" class="tab" onclick="showTab('history')"><svg viewBox="0 0 24 24"><path d="M12 8v5l3 2"/><path d="M4.3 12a7.7 7.7 0 1 0 2.2-5.4"/><path d="M4 4v5h5"/></svg><span>История</span></button>
     <button id="tabAdmin" class="tab hidden" onclick="showTab('admin')"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>Админ</span></button>
   </nav>
+  <div id="modal" class="modal hidden" onclick="closeModalByBackdrop(event)">
+    <div class="modalCard">
+      <h3 id="modalTitle">Выбор</h3>
+      <div id="modalBody"></div>
+      <div class="modalActions"><button class="gray" onclick="closeModal()">Отменить</button><button id="modalOk" onclick="modalSubmit()">Сохранить</button></div>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
 <script>
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
@@ -92,6 +107,23 @@
   function toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')}
   function toast(text){const el=document.getElementById('toast');el.textContent=text;el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
   async function api(path, options={}){const res=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Telegram-Init-Data':initData,...(options.headers||{})}});if(!res.ok)throw new Error(await res.text());const txt=await res.text();return txt?JSON.parse(txt):{}}
+  let modalResolver=null;
+  function closeModal(value=null){document.getElementById('modal').classList.add('hidden');if(modalResolver){modalResolver(value);modalResolver=null}}
+  function closeModalByBackdrop(e){if(e.target.id==='modal')closeModal(null)}
+  function modalSubmit(){if(window.__modalSubmit)window.__modalSubmit();else closeModal(true)}
+  function openModal(title, bodyHtml, submitFn){document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=bodyHtml;document.getElementById('modal').classList.remove('hidden');window.__modalSubmit=submitFn;return new Promise(resolve=>{modalResolver=resolve})}
+  async function chooseTime(title, current){
+    const value=(current || new Date().toTimeString().slice(0,5));
+    return await openModal(title, `<label>Время</label><input id="modalTime" type="time" value="${escapeHtml(value)}">`, ()=>closeModal(document.getElementById('modalTime').value));
+  }
+  async function chooseStatus(current){
+    const checked=s=>current===s?'checked':'';
+    return await openModal('Изменить статус', `<div class="statusChoice">
+      <label class="statusOption"><input type="radio" name="statusChoice" value="pending" ${checked('pending')}> ⏳ Не принято</label>
+      <label class="statusOption"><input type="radio" name="statusChoice" value="taken" ${checked('taken')}> ✅ Принято</label>
+      <label class="statusOption"><input type="radio" name="statusChoice" value="skipped" ${checked('skipped')}> ⏭️ Пропущено</label>
+    </div>`, ()=>{const el=document.querySelector('input[name="statusChoice"]:checked');closeModal(el?el.value:null)});
+  }
   function pageId(name){return 'page'+name[0].toUpperCase()+name.slice(1)} function tabId(name){return 'tab'+name[0].toUpperCase()+name.slice(1)}
   function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin')loadSchedules();window.scrollTo({top:0,behavior:'smooth'});}
   function setTodayFilter(f){todayFilter=f;localStorage.setItem('todayFilter',f);renderToday()}
@@ -118,21 +150,16 @@
   }
   async function loadToday(){todayRows=await api('/api/today');renderToday()}
   async function take(id){const actual=new Date().toTimeString().slice(0,5);const data=await api(`/api/events/${id}/take`,{method:'POST',body:JSON.stringify({actual_time:actual})});toast(data.message||'Сохранено');await loadToday();if(tg?.HapticFeedback)tg.HapticFeedback.notificationOccurred('success')}
-  async function editTakenTime(id,current,planned){const value=prompt('Фактическое время приема', current || planned || new Date().toTimeString().slice(0,5));if(value===null)return;if(!/^\d{2}:\d{2}$/.test(value)){toast('Введите время в формате HH:MM');return}const data=await api(`/api/events/${id}/taken-time`,{method:'PATCH',body:JSON.stringify({actual_time:value})});toast(data.message||'Время обновлено');await loadToday()}
+  async function editTakenTime(id,current,planned){const value=await chooseTime('Фактическое время приема', current || planned);if(value===null)return;if(!/^\d{2}:\d{2}$/.test(value)){toast('Выберите время');return}const data=await api(`/api/events/${id}/taken-time`,{method:'PATCH',body:JSON.stringify({actual_time:value})});toast(data.message||'Время обновлено');await loadToday()}
 
   async function changeStatus(id,current,currentTime,planned){
-    const choice=prompt(`Новый статус:\n1 — Не принято\n2 — Принято\n3 — Пропущено`, current==='taken'?'2':current==='skipped'?'3':'1');
-    if(choice===null)return;
-    let status=null, actual_time=null;
-    const v=choice.trim().toLowerCase();
-    if(v==='1'||v==='не принято'||v==='pending') status='pending';
-    if(v==='2'||v==='принято'||v==='выпил'||v==='taken') status='taken';
-    if(v==='3'||v==='пропущено'||v==='пропустил'||v==='skipped') status='skipped';
-    if(!status){toast('Выберите 1, 2 или 3');return}
+    const status=await chooseStatus(current);
+    if(!status)return;
+    let actual_time=null;
     if(status==='taken'){
-      actual_time=prompt('Фактическое время приема', currentTime || planned || new Date().toTimeString().slice(0,5));
+      actual_time=await chooseTime('Фактическое время приема', currentTime || planned);
       if(actual_time===null)return;
-      if(!/^\d{2}:\d{2}$/.test(actual_time)){toast('Введите время в формате HH:MM');return}
+      if(!/^\d{2}:\d{2}$/.test(actual_time)){toast('Выберите время');return}
     }
     const data=await api(`/api/events/${id}/status`,{method:'PATCH',body:JSON.stringify({status, actual_time})});
     toast(data.message||'Статус обновлен');
@@ -166,12 +193,14 @@
   async function loadSchedules(){if(!me?.is_parent)return;const rows=await api('/api/schedules');const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
   function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday()}
-  async function addSchedule(){if(!me?.is_parent){toast('Доступно только родителям');return}const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),time_local:document.getElementById('time').value,label:document.getElementById('label').value.trim(),start_date:document.getElementById('startDate').value||null,end_date:document.getElementById('endDate').value||null};if(!payload.name||!payload.dose||!payload.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules',{method:'POST',body:JSON.stringify(payload)});toast('Прием добавлен');['name','dose','label','startDate','endDate'].forEach(id=>document.getElementById(id).value='');loadSchedules();loadToday()}
+  function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
+  function renderFrequencySlots(){const {count}=parseFrequency();const root=document.getElementById('frequencySlots');let defaults=['09:00','15:00','21:00'];root.innerHTML=Array.from({length:count},(_,i)=>`<div class="slotGroup"><div class="slotGroupTitle">Прием ${i+1}</div><div class="slotRow"><label>Время</label><input id="slotTime${i}" type="time" value="${defaults[i]||'09:00'}"></div><div class="slotRow"><label>Комментарий</label><input id="slotLabel${i}" placeholder="например, после еды"></div></div>`).join('')}
+  async function addSchedule(){if(!me?.is_parent){toast('Доступно только родителям');return}const f=parseFrequency();const entries=[];for(let i=0;i<f.count;i++){const time=document.getElementById('slotTime'+i).value;const label=document.getElementById('slotLabel'+i).value.trim();if(time)entries.push({time_local:time,label:label||time})}const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),start_date:document.getElementById('startDate').value||null,end_date:document.getElementById('endDate').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,entries};if(!payload.name||!payload.dose||!entries.length){toast('Заполните лекарство, дозу и хотя бы одно время');return}const res=await api('/api/schedules',{method:'POST',body:JSON.stringify(payload)});toast(`Лекарство добавлено: ${res.count||entries.length} прием(а)`);['name','dose','startDate','endDate'].forEach(id=>document.getElementById(id).value='');document.getElementById('frequency').value='daily:1:1';renderFrequencySlots();loadSchedules();loadToday()}
   async function deleteSchedule(id){if(!confirm('Удалить этот прием из расписания?'))return;await api('/api/schedules/'+id,{method:'DELETE'});toast('Прием удален');loadSchedules();loadToday()}
   async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
   async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable historyTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table></div>`}
-  async function init(){try{me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.is_parent)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.is_parent)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+  async function init(){try{renderFrequencySlots();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.is_parent)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.is_parent)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();
 </script>
 </body>
