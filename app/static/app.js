@@ -1,6 +1,6 @@
 
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
-  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; localStorage.setItem('todayFilter','pending');
+  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
   function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('theme',t);document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙'}
@@ -73,6 +73,7 @@
     document.getElementById('adminPanelProfiles')?.classList.toggle('hidden', name!=='profiles');
     if(name==='assignments'){loadCourses();}
     if(name==='meds'){loadCourses();loadSchedules();loadAudit();}
+    if(name==='inventory'){loadInventory();}
     if(name==='profiles'){loadProfileAdmin();}
   }
   function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin'){showAdminTab(currentAdminTab||'assignments');}window.scrollTo({top:0,behavior:'smooth'});}
@@ -203,6 +204,87 @@
     return openModal(safeName, body, ()=>closeModal(true), 'Закрыть');
   }
   function isImageFilename(name=''){return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name)}
+
+  function aiDisabledHtml(){return '<div class="empty">ИИ-помощник выключен. Добавьте OPENAI_API_KEY и OPENAI_ENABLED=true в Railway.</div>'}
+  function aiMedicineSummary(m){return `${escapeHtml(m.name||'—')} · ${escapeHtml(m.dose||'—')} · ${escapeHtml(m.comment||'')}`}
+  function frequencyValueFromAI(m){
+    const c=Number(m.frequency_count||1);
+    const u=m.frequency_unit||'day';
+    if(u==='week') return 'weekly:7:1';
+    if(u==='2weeks') return 'weekly:14:1';
+    if(u==='month') return 'monthly:30:1';
+    if(c===2) return 'daily:1:2';
+    if(c===3) return 'daily:1:3';
+    return 'daily:1:1';
+  }
+  function applyAIMedicine(m){
+    if(!m)return;
+    const name=document.getElementById('name'), dose=document.getElementById('dose');
+    if(name) name.value=m.name||'';
+    if(dose) dose.value=m.dose||'';
+    const start=document.getElementById('medStart'), end=document.getElementById('medEnd');
+    if(start && m.start_date) start.value=m.start_date;
+    if(end && m.end_date) end.value=m.end_date;
+    const tpl=document.getElementById('timingTemplate'); if(tpl && m.timing_template) tpl.value=m.timing_template;
+    const freq=document.getElementById('frequency'); if(freq) freq.value=frequencyValueFromAI(m);
+    renderFrequencySlots();
+    const meals=Array.isArray(m.meals)?m.meals:[]; const times=Array.isArray(m.times)?m.times:[];
+    const f=parseFrequency();
+    for(let i=0;i<f.count;i++){
+      const mealEl=document.getElementById('slotMeal'+i); if(mealEl && meals[i]) mealEl.value=meals[i];
+      const timeEl=document.getElementById('slotTime'+i); if(timeEl && times[i]) timeEl.value=times[i];
+      const labelEl=document.getElementById('slotLabel'+i); if(labelEl && (m.comment||'')) labelEl.value=m.comment||'';
+    }
+    toast('Форма заполнена. Проверьте данные перед сохранением.');
+    if(!addMedicineOpen) toggleAddMedicineForm();
+  }
+  async function aiParseMedicineText(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const text=document.getElementById('aiMedicineText')?.value.trim();
+    if(!text){toast('Опишите назначение текстом');return}
+    const res=await api('/api/ai/parse-medicine',{method:'POST',body:JSON.stringify({text})});
+    const meds=res.medicines||[];
+    if(!meds.length){toast('Не удалось распознать назначение');return}
+    if(meds.length===1){applyAIMedicine(meds[0]);return}
+    const body=`<div class="aiDraftList">${meds.map((m,i)=>`<button class="statusOption" onclick="closeModal(${i})"><span>${aiMedicineSummary(m)}</span></button>`).join('')}</div><div class="muted" style="font-size:12px;margin-top:8px">Выберите препарат, которым заполнить форму. Остальные можно добавить по очереди.</div>`;
+    const idx=await openModal('Распознано несколько препаратов', body, ()=>closeModal(null), 'Закрыть');
+    if(idx!==null && meds[idx]) applyAIMedicine(meds[idx]);
+  }
+  async function aiParsePrescriptionFile(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const file=document.getElementById('aiPrescriptionFile')?.files?.[0];
+    if(!file){toast('Выберите фото или файл назначения');return}
+    const fd=new FormData(); fd.append('file', file);
+    const res=await api('/api/ai/parse-prescription',{method:'POST',body:fd,headers:{}});
+    const meds=res.medicines||[];
+    if(!meds.length){toast('Не удалось распознать препараты');return}
+    const warn=(res.warnings||[]).map(w=>`<div class="confirmWarn">${escapeHtml(w)}</div>`).join('');
+    const body=`${warn}<div class="aiDraftList">${meds.map((m,i)=>`<button class="statusOption" onclick="closeModal(${i})"><span>${aiMedicineSummary(m)}</span></button>`).join('')}</div><div class="muted" style="font-size:12px;margin-top:8px">Выберите препарат, которым заполнить форму. Перед сохранением обязательно проверьте данные по назначению врача.</div>`;
+    const idx=await openModal('Черновик из назначения', body, ()=>closeModal(null), 'Закрыть');
+    if(idx!==null && meds[idx]) applyAIMedicine(meds[idx]);
+  }
+  async function aiRecognizeInventoryPhoto(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const file=document.getElementById('invPhoto')?.files?.[0];
+    if(!file){toast('Сначала выберите фото лекарства');return}
+    const fd=new FormData(); fd.append('file', file);
+    const res=await api('/api/ai/recognize-inventory-photo',{method:'POST',body:fd,headers:{}});
+    const name=(res.name||'').trim();
+    if(name){
+      const sel=document.getElementById('invName'); const manual=document.getElementById('invNameManual');
+      if(sel && [...sel.options].some(o=>o.value===name)) sel.value=name; else { if(sel)sel.value=''; if(manual)manual.value=name; document.getElementById('invManualLine')?.classList.remove('hidden'); }
+    }
+    if(res.unit_name && document.getElementById('invUnit')) document.getElementById('invUnit').value=res.unit_name;
+    toast(name?'Название распознано. Проверьте перед сохранением.':'Не удалось уверенно распознать название');
+  }
+  async function aiDoctorReportDraft(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const days=Number(document.getElementById('aiReportDays')?.value||30);
+    const res=await api('/api/ai/report-draft',{method:'POST',body:JSON.stringify({days})});
+    const body=`<div class="reportDraft"><h4>${escapeHtml(res.title||'Черновик отчета')}</h4><p>${escapeHtml(res.summary||'')}</p><b>Факты:</b><ul>${(res.bullets||[]).map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul><b>Вопросы врачу:</b><ul>${(res.questions_for_doctor||[]).map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></div>`;
+    await openModal('Черновик отчета для врача', body, ()=>closeModal(true), 'Закрыть');
+  }
+
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
@@ -309,8 +391,8 @@
   async function uploadInventoryPhoto(id,file,reload=true){if(!file)return;const fd=new FormData();fd.append('file',file);await api('/api/inventory/'+id+'/photo',{method:'POST',body:fd,headers:{}});toast('Фото сохранено');if(reload)await loadInventory()}
   async function downloadReport(kind){const res=await fetch(`/api/reports/doctor.${kind}?days=30`,{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});if(!res.ok){toast('Не удалось сформировать отчет');return}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=kind==='pdf'?'doctor_report.pdf':'doctor_report.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 
-  async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
+  async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');const report=`<div class="formrow" style="margin-bottom:12px"><b>ИИ-черновик отчета для врача</b><div class="fieldLine"><label>Период</label><select id="aiReportDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></div><button class="wide gray" onclick="aiDoctorReportDraft()" ${aiEnabled?'':'disabled'}>Подготовить черновик</button>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div>`;if(!rows.length){root.innerHTML=report+'<div class="empty">Статистики пока нет</div>';return}root.innerHTML=report+`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
   async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable historyTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table></div>`}
-  async function init(){try{renderFrequencySlots();me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+  async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();

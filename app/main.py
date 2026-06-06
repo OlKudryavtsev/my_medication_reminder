@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
 from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem
+from .ai import ai_enabled, ask_json, MEDICINE_SCHEMA_PROMPT, PRESCRIPTION_IMAGE_PROMPT, INVENTORY_PHOTO_PROMPT, REPORT_PROMPT, AIUnavailable
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -142,6 +143,14 @@ class InventoryPayload(BaseModel):
     quantity: int = 0
     unit_name: str = "шт"
     low_threshold: int = 5
+
+
+class AITextPayload(BaseModel):
+    text: str
+
+
+class AIReportPayload(BaseModel):
+    days: int = 30
 
 
 
@@ -435,6 +444,93 @@ async def api_audit(request: Request, limit: int = 50):
             }
             for r in rows
         ]
+
+
+
+
+@app.get("/api/ai/status", response_class=ORJSONResponse)
+async def api_ai_status(request: Request):
+    # Доступен известным пользователям, чтобы фронт мог скрыть AI-блоки.
+    require_known(request)
+    return {"enabled": ai_enabled(), "model": settings.openai_model if ai_enabled() else ""}
+
+
+@app.post("/api/ai/parse-medicine", response_class=ORJSONResponse)
+async def api_ai_parse_medicine(payload: AITextPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    try:
+        data = await ask_json(MEDICINE_SCHEMA_PROMPT, user_text=payload.text.strip())
+    except AIUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI parse failed: {e}")
+    return data
+
+
+@app.post("/api/ai/parse-prescription", response_class=ORJSONResponse)
+async def api_ai_parse_prescription(request: Request, file: UploadFile = File(...)):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File is too large; max 8 MB")
+    try:
+        result = await ask_json(PRESCRIPTION_IMAGE_PROMPT, image_bytes=data, content_type=file.content_type or "image/jpeg")
+    except AIUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI parse failed: {e}")
+    return result
+
+
+@app.post("/api/ai/recognize-inventory-photo", response_class=ORJSONResponse)
+async def api_ai_inventory_photo(request: Request, file: UploadFile = File(...)):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File is too large; max 8 MB")
+    try:
+        result = await ask_json(INVENTORY_PHOTO_PROMPT, image_bytes=data, content_type=file.content_type or "image/jpeg")
+    except AIUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI recognize failed: {e}")
+    return result
+
+
+@app.post("/api/ai/report-draft", response_class=ORJSONResponse)
+async def api_ai_report_draft(payload: AIReportPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        profile, stats, events = await _report_rows(session, profile_id, max(1, min(payload.days, 365)))
+        facts = {
+            "profile": profile.name if profile else "Профиль",
+            "days": payload.days,
+            "stats": stats,
+            "events": [
+                {
+                    "date": e.due_at.astimezone(TZ).strftime("%Y-%m-%d"),
+                    "time": e.due_at.astimezone(TZ).strftime("%H:%M"),
+                    "medicine": e.schedule.medicine.name,
+                    "dose": e.schedule.dose,
+                    "status": e.status,
+                    "taken_at": e.taken_at.astimezone(TZ).strftime("%H:%M") if e.taken_at else "",
+                    "skipped_at": e.skipped_at.astimezone(TZ).strftime("%H:%M") if e.skipped_at else "",
+                }
+                for e in events[:120]
+            ],
+        }
+    try:
+        result = await ask_json(REPORT_PROMPT, user_text=json.dumps(facts, ensure_ascii=False))
+    except AIUnavailable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI report failed: {e}")
+    return result
 
 
 @app.get("/api/courses", response_class=ORJSONResponse)

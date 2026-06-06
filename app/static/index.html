@@ -38,7 +38,7 @@
     .pendingActions button{min-height:34px;height:34px;border-radius:11px;font-size:12px;padding:7px 8px;text-align:center;white-space:nowrap}
     .resultLine{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;min-height:32px}.doneActions{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:center;margin-top:7px}.doneActions:not(.skipOnly) .resultPill{grid-column:1/-1}.doneActions.skipOnly{grid-template-columns:minmax(0,1fr) auto}.doneActions button{min-width:0}.resultPill{display:flex;align-items:center;gap:5px;min-width:0;border-radius:999px;background:var(--soft);border:1px solid var(--line);padding:7px 10px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.resultPill strong{color:var(--text);font-size:12px;flex:0 0 auto}.resultPill span{min-width:0;overflow:hidden;text-overflow:ellipsis}.editTimeBtn,.changeStatusBtn{min-height:30px!important;height:30px;border-radius:10px!important;font-size:12px!important;background:var(--brand)!important;color:white!important;padding:6px 9px!important;flex:0 0 auto;white-space:nowrap}.changeStatusBtn{background:var(--soft)!important;color:var(--brand)!important;border:1px solid var(--line)!important}
     button{appearance:none;border:0;border-radius:14px;padding:10px 12px;background:var(--brand);color:white;font-weight:850;font-size:14px;line-height:1;min-height:40px}button:disabled{opacity:.42}.ok{background:var(--ok)}.warn{background:var(--warn);color:#111}.danger{background:var(--danger)}.gray{background:var(--brand2);color:var(--brand)}.blue{background:var(--brand)!important;color:white!important}
-    input,select{width:100%;min-width:0;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px;-webkit-appearance:none;appearance:none}input[type="time"],input[type="date"]{text-align:left}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+    input,select,textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px;-webkit-appearance:none;appearance:none}textarea{min-height:78px;resize:vertical;font-family:inherit}.aiBox{background:var(--brand2);border-color:rgba(47,128,237,.22)}.aiDraftList{display:grid;gap:8px}.reportDraft{font-size:14px;line-height:1.35}.reportDraft h4{margin:0 0 8px}.reportDraft ul{padding-left:18px;margin:6px 0 12px}input[type="time"],input[type="date"]{text-align:left}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.wide{width:100%}
 
     .adminList{display:grid;gap:9px}.formrow{border:1px solid var(--line);border-radius:17px;padding:10px;margin:0;background:rgba(127,127,127,.03);overflow:hidden}
@@ -87,6 +87,7 @@
         <div id="adminPanelMeds" class="adminPanel hidden">
           <div class="card"><button id="addMedicineToggle" class="collapseToggle" onclick="toggleAddMedicineForm()"><span>Добавить лекарство</span><span class="chev">＋</span></button>
             <div id="addMedicineForm" class="addForm hidden">
+              <div class="formrow aiBox"><b>ИИ-помощник</b><div class="muted" style="font-size:12px;margin-top:4px">Опишите назначение текстом или загрузите фото назначения. Перед сохранением обязательно проверьте результат.</div><label>Текст назначения</label><textarea id="aiMedicineText" placeholder="Например: Панкреатин 1 капсула во время еды 3 раза в день с 10 по 20 июня"></textarea><div class="grid2" style="margin-top:8px"><button class="gray" onclick="aiParseMedicineText()">Заполнить из текста</button><label style="margin:0"><span style="display:block;font-size:10px;font-weight:850;color:var(--muted);margin-bottom:4px">Фото назначения</span><input id="aiPrescriptionFile" type="file" accept="image/*" onchange="aiParsePrescriptionFile()"></label></div></div>
               <div class="fieldLine"><label>Лекарство</label><input id="name" placeholder="Аквадетрим" /></div>
               <div class="fieldLine"><label>Доза</label><input id="dose" placeholder="2 капли" /></div>
               <div class="fieldLine"><label>Назначение</label><select id="courseSelect"><option value="">Без назначения</option></select></div>
@@ -120,6 +121,7 @@
               <div class="fieldLine"><label>Ед. изм.</label><input id="invUnit" value="шт"></div>
               <div class="fieldLine"><label>Напомнить при</label><input id="invThreshold" type="number" min="0" value="5"></div>
               <div class="fieldLine"><label>Фото</label><input id="invPhoto" type="file" accept="image/*"></div>
+              <button class="wide gray" onclick="aiRecognizeInventoryPhoto()" style="margin-top:6px">Распознать название по фото</button>
               <button class="wide" onclick="addInventory()" style="margin-top:10px">Добавить в аптечку</button>
             </div>
             <div id="inventoryBox" style="margin-top:14px">Загрузка...</div>
@@ -146,8 +148,9 @@
   </div>
   <div class="toast" id="toast"></div>
 <script>
+
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
-  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; localStorage.setItem('todayFilter','pending');
+  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
   function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('theme',t);document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙'}
@@ -220,8 +223,8 @@
     document.getElementById('adminPanelProfiles')?.classList.toggle('hidden', name!=='profiles');
     if(name==='assignments'){loadCourses();}
     if(name==='meds'){loadCourses();loadSchedules();loadAudit();}
-    if(name==='profiles'){loadProfileAdmin();}
     if(name==='inventory'){loadInventory();}
+    if(name==='profiles'){loadProfileAdmin();}
   }
   function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin'){showAdminTab(currentAdminTab||'assignments');}window.scrollTo({top:0,behavior:'smooth'});}
   function setTodayFilter(f){todayFilter=f;localStorage.setItem('todayFilter',f);renderToday()}
@@ -322,7 +325,6 @@
     addInventoryOpen=!addInventoryOpen;
     document.getElementById('addInventoryForm')?.classList.toggle('hidden', !addInventoryOpen);
     setCollapseButton('addInventoryToggle', addInventoryOpen, 'Скрыть форму добавления', 'Добавить в аптечку');
-    if(addInventoryOpen) populateInventoryMedicineSelect();
   }
   function populateMedicineFilter(selectId, rows, getName){
     const sel=document.getElementById(selectId); if(!sel)return '';
@@ -333,26 +335,14 @@
     else sel.value='';
     return sel.value || '';
   }
-  function toggleInventoryManualName(){
-    const sel=document.getElementById('invName');
-    const line=document.getElementById('invManualLine');
-    if(!sel||!line)return;
-    line.classList.toggle('hidden', !!sel.value);
-  }
   async function populateInventoryMedicineSelect(){
     const sel=document.getElementById('invName'); if(!sel)return;
     const current=sel.value || '';
-    let names=[];
-    try{
-      const rows=await api('/api/medicine-options');
-      names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-    }catch(e){
-      names=[];
-    }
+    let rows=[];
+    try{ rows=await api('/api/schedules'); }catch(e){ rows=[]; }
+    const names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
     sel.innerHTML='<option value="">Выберите лекарство</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
     if(current && names.includes(current)) sel.value=current;
-    else sel.value='';
-    toggleInventoryManualName();
   }
   function attachmentUrl(id){return `/api/attachments/${id}?profile_id=${currentProfileId||''}`}
   function inventoryPhotoUrl(i){return `${i.photo_url}?profile_id=${currentProfileId||''}&t=${Date.now()}`}
@@ -364,6 +354,87 @@
     return openModal(safeName, body, ()=>closeModal(true), 'Закрыть');
   }
   function isImageFilename(name=''){return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name)}
+
+  function aiDisabledHtml(){return '<div class="empty">ИИ-помощник выключен. Добавьте OPENAI_API_KEY и OPENAI_ENABLED=true в Railway.</div>'}
+  function aiMedicineSummary(m){return `${escapeHtml(m.name||'—')} · ${escapeHtml(m.dose||'—')} · ${escapeHtml(m.comment||'')}`}
+  function frequencyValueFromAI(m){
+    const c=Number(m.frequency_count||1);
+    const u=m.frequency_unit||'day';
+    if(u==='week') return 'weekly:7:1';
+    if(u==='2weeks') return 'weekly:14:1';
+    if(u==='month') return 'monthly:30:1';
+    if(c===2) return 'daily:1:2';
+    if(c===3) return 'daily:1:3';
+    return 'daily:1:1';
+  }
+  function applyAIMedicine(m){
+    if(!m)return;
+    const name=document.getElementById('name'), dose=document.getElementById('dose');
+    if(name) name.value=m.name||'';
+    if(dose) dose.value=m.dose||'';
+    const start=document.getElementById('medStart'), end=document.getElementById('medEnd');
+    if(start && m.start_date) start.value=m.start_date;
+    if(end && m.end_date) end.value=m.end_date;
+    const tpl=document.getElementById('timingTemplate'); if(tpl && m.timing_template) tpl.value=m.timing_template;
+    const freq=document.getElementById('frequency'); if(freq) freq.value=frequencyValueFromAI(m);
+    renderFrequencySlots();
+    const meals=Array.isArray(m.meals)?m.meals:[]; const times=Array.isArray(m.times)?m.times:[];
+    const f=parseFrequency();
+    for(let i=0;i<f.count;i++){
+      const mealEl=document.getElementById('slotMeal'+i); if(mealEl && meals[i]) mealEl.value=meals[i];
+      const timeEl=document.getElementById('slotTime'+i); if(timeEl && times[i]) timeEl.value=times[i];
+      const labelEl=document.getElementById('slotLabel'+i); if(labelEl && (m.comment||'')) labelEl.value=m.comment||'';
+    }
+    toast('Форма заполнена. Проверьте данные перед сохранением.');
+    if(!addMedicineOpen) toggleAddMedicineForm();
+  }
+  async function aiParseMedicineText(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const text=document.getElementById('aiMedicineText')?.value.trim();
+    if(!text){toast('Опишите назначение текстом');return}
+    const res=await api('/api/ai/parse-medicine',{method:'POST',body:JSON.stringify({text})});
+    const meds=res.medicines||[];
+    if(!meds.length){toast('Не удалось распознать назначение');return}
+    if(meds.length===1){applyAIMedicine(meds[0]);return}
+    const body=`<div class="aiDraftList">${meds.map((m,i)=>`<button class="statusOption" onclick="closeModal(${i})"><span>${aiMedicineSummary(m)}</span></button>`).join('')}</div><div class="muted" style="font-size:12px;margin-top:8px">Выберите препарат, которым заполнить форму. Остальные можно добавить по очереди.</div>`;
+    const idx=await openModal('Распознано несколько препаратов', body, ()=>closeModal(null), 'Закрыть');
+    if(idx!==null && meds[idx]) applyAIMedicine(meds[idx]);
+  }
+  async function aiParsePrescriptionFile(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const file=document.getElementById('aiPrescriptionFile')?.files?.[0];
+    if(!file){toast('Выберите фото или файл назначения');return}
+    const fd=new FormData(); fd.append('file', file);
+    const res=await api('/api/ai/parse-prescription',{method:'POST',body:fd,headers:{}});
+    const meds=res.medicines||[];
+    if(!meds.length){toast('Не удалось распознать препараты');return}
+    const warn=(res.warnings||[]).map(w=>`<div class="confirmWarn">${escapeHtml(w)}</div>`).join('');
+    const body=`${warn}<div class="aiDraftList">${meds.map((m,i)=>`<button class="statusOption" onclick="closeModal(${i})"><span>${aiMedicineSummary(m)}</span></button>`).join('')}</div><div class="muted" style="font-size:12px;margin-top:8px">Выберите препарат, которым заполнить форму. Перед сохранением обязательно проверьте данные по назначению врача.</div>`;
+    const idx=await openModal('Черновик из назначения', body, ()=>closeModal(null), 'Закрыть');
+    if(idx!==null && meds[idx]) applyAIMedicine(meds[idx]);
+  }
+  async function aiRecognizeInventoryPhoto(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const file=document.getElementById('invPhoto')?.files?.[0];
+    if(!file){toast('Сначала выберите фото лекарства');return}
+    const fd=new FormData(); fd.append('file', file);
+    const res=await api('/api/ai/recognize-inventory-photo',{method:'POST',body:fd,headers:{}});
+    const name=(res.name||'').trim();
+    if(name){
+      const sel=document.getElementById('invName'); const manual=document.getElementById('invNameManual');
+      if(sel && [...sel.options].some(o=>o.value===name)) sel.value=name; else { if(sel)sel.value=''; if(manual)manual.value=name; document.getElementById('invManualLine')?.classList.remove('hidden'); }
+    }
+    if(res.unit_name && document.getElementById('invUnit')) document.getElementById('invUnit').value=res.unit_name;
+    toast(name?'Название распознано. Проверьте перед сохранением.':'Не удалось уверенно распознать название');
+  }
+  async function aiDoctorReportDraft(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const days=Number(document.getElementById('aiReportDays')?.value||30);
+    const res=await api('/api/ai/report-draft',{method:'POST',body:JSON.stringify({days})});
+    const body=`<div class="reportDraft"><h4>${escapeHtml(res.title||'Черновик отчета')}</h4><p>${escapeHtml(res.summary||'')}</p><b>Факты:</b><ul>${(res.bullets||[]).map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul><b>Вопросы врачу:</b><ul>${(res.questions_for_doctor||[]).map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></div>`;
+    await openModal('Черновик отчета для врача', body, ()=>closeModal(true), 'Закрыть');
+  }
+
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
@@ -464,16 +535,16 @@
     if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
     root.innerHTML=`<div class="adminList">${rows.map(i=>`<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div><div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div></div>`).join('')}</div>`;
   }
-  async function addInventory(){const selected=document.getElementById('invName')?.value||'';const manual=document.getElementById('invNameManual')?.value.trim()||'';const name=selected||manual;if(!name){toast('Выберите лекарство из списка или введите название вручную');return}const res=await api('/api/inventory',{method:'POST',body:JSON.stringify({name,quantity:Number(document.getElementById('invQty').value||0),unit_name:document.getElementById('invUnit').value||'шт',low_threshold:Number(document.getElementById('invThreshold').value||0)})});const file=document.getElementById('invPhoto').files[0];if(file)await uploadInventoryPhoto(res.id,file,false);document.getElementById('invName').value='';const manualEl=document.getElementById('invNameManual');if(manualEl)manualEl.value='';document.getElementById('invPhoto').value='';document.getElementById('invQty').value='0';toggleInventoryManualName();toast('Добавлено в аптечку');addInventoryOpen=false;document.getElementById('addInventoryForm')?.classList.add('hidden');setCollapseButton('addInventoryToggle', false, 'Скрыть форму добавления', 'Добавить в аптечку');await loadInventory();await loadAudit()}
+  async function addInventory(){const name=document.getElementById('invName').value;if(!name){toast('Выберите лекарство из списка');return}const res=await api('/api/inventory',{method:'POST',body:JSON.stringify({name,quantity:Number(document.getElementById('invQty').value||0),unit_name:document.getElementById('invUnit').value||'шт',low_threshold:Number(document.getElementById('invThreshold').value||0)})});const file=document.getElementById('invPhoto').files[0];if(file)await uploadInventoryPhoto(res.id,file,false);document.getElementById('invName').value='';document.getElementById('invPhoto').value='';document.getElementById('invQty').value='0';toast('Добавлено в аптечку');addInventoryOpen=false;document.getElementById('addInventoryForm')?.classList.add('hidden');setCollapseButton('addInventoryToggle', false, 'Скрыть форму добавления', 'Добавить в аптечку');await loadInventory();await loadAudit()}
   async function editInventory(id,name,qty,unit,thr){const body=`<label>Лекарство</label><input id="eiName" value="${name}" readonly><label>Остаток</label><input id="eiQty" type="number" min="0" value="${qty}"><label>Ед. изм.</label><input id="eiUnit" value="${unit}"><label>Напомнить при</label><input id="eiThr" type="number" min="0" value="${thr}">`;const ok=await openModal('Изменить запас', body, ()=>closeModal({name:document.getElementById('eiName').value.trim(),quantity:Number(document.getElementById('eiQty').value||0),unit_name:document.getElementById('eiUnit').value||'шт',low_threshold:Number(document.getElementById('eiThr').value||0)}));if(!ok)return;await api('/api/inventory/'+id,{method:'PUT',body:JSON.stringify(ok)});toast('Запас обновлен');await loadInventory();await loadAudit()}
   async function deleteInventory(id){const ok=await confirmAction('Удалить из аптечки?', 'Запись о запасе лекарства будет скрыта.');if(!ok)return;await api('/api/inventory/'+id,{method:'DELETE'});toast('Удалено из аптечки');await loadInventory();await loadAudit()}
   async function uploadInventoryPhoto(id,file,reload=true){if(!file)return;const fd=new FormData();fd.append('file',file);await api('/api/inventory/'+id+'/photo',{method:'POST',body:fd,headers:{}});toast('Фото сохранено');if(reload)await loadInventory()}
   async function downloadReport(kind){const res=await fetch(`/api/reports/doctor.${kind}?days=30`,{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});if(!res.ok){toast('Не удалось сформировать отчет');return}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=kind==='pdf'?'doctor_report.pdf':'doctor_report.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 
-  async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
+  async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');const report=`<div class="formrow" style="margin-bottom:12px"><b>ИИ-черновик отчета для врача</b><div class="fieldLine"><label>Период</label><select id="aiReportDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></div><button class="wide gray" onclick="aiDoctorReportDraft()" ${aiEnabled?'':'disabled'}>Подготовить черновик</button>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div>`;if(!rows.length){root.innerHTML=report+'<div class="empty">Статистики пока нет</div>';return}root.innerHTML=report+`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
   async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable historyTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table></div>`}
-  async function init(){try{renderFrequencySlots();me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+  async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();
 </script>
 </body>

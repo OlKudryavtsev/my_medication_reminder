@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     default_breakfast_time: str = "08:00"
     default_lunch_time: str = "13:30"
     default_dinner_time: str = "19:30"
+    openai_enabled: bool = False
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
