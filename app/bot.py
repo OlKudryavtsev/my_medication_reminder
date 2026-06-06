@@ -142,18 +142,18 @@ def choose_time_keyboard(event_id: int, scheduled_hhmm: str) -> InlineKeyboardMa
 
 
 def app_keyboard(text: str = "💊 Открыть мини-приложение") -> InlineKeyboardMarkup | None:
-    if not settings.app_base_url:
+    if not settings.app_url:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text=text, web_app=WebAppInfo(url=f"{settings.app_base_url.rstrip('/')}/app")
+        text=text, web_app=WebAppInfo(url=settings.app_url)
     )]])
 
 
 def admin_keyboard() -> InlineKeyboardMarkup | None:
-    if not settings.app_base_url:
+    if not settings.admin_url:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="⚙️ Открыть администрирование", web_app=WebAppInfo(url=f"{settings.app_base_url.rstrip('/')}/app#admin")
+        text="⚙️ Открыть администрирование", web_app=WebAppInfo(url=settings.admin_url)
     )]])
 
 

@@ -1,3 +1,12 @@
+# MedKid Bot — v14
+
+Исправление v14: добавлен недостающий импорт `group_key_for_due` и `group_reminder_text` в `app/main.py`.
+Это устраняет ошибку фонового планировщика напоминаний:
+
+```text
+NameError: name 'group_key_for_due' is not defined
+```
+
 # MedKid Bot — Telegram-бот и Mini App для приема лекарств
 
 Проект для Railway: Telegram-бот (`aiogram`) + Mini App/API (`FastAPI`) + PostgreSQL.
@@ -288,3 +297,19 @@ git push
 - 📋 Сегодня
 
 Групповая отметка применяет выбранное действие ко всем непринятым препаратам с этим временем приема. Если в группе часть лекарств уже была отмечена, действие применится только к оставшимся `pending`-событиям.
+
+## v13: исправление APP_BASE_URL
+
+Если в Railway переменная `APP_BASE_URL` указана без `https://`, Telegram отклоняет WebApp-кнопку с ошибкой `Only HTTPS links are allowed`. Начиная с v13 приложение само нормализует URL:
+
+- `mymedicationreminder-production.up.railway.app` превратится в `https://mymedicationreminder-production.up.railway.app/app`;
+- `https://mymedicationreminder-production.up.railway.app` превратится в `https://mymedicationreminder-production.up.railway.app/app`;
+- `https://mymedicationreminder-production.up.railway.app/app` останется как есть.
+
+Рекомендуемое значение Railway Variables:
+
+```env
+APP_BASE_URL=https://mymedicationreminder-production.up.railway.app
+```
+
+Не добавляйте лишний `/app`, хотя v13 умеет корректно обработать и такой вариант.
