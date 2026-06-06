@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog
+from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
@@ -188,6 +188,63 @@ async def get_audit_log(session: AsyncSession, profile_id: int, limit: int = 50)
     return list(rows)
 
 
+async def get_courses(session: AsyncSession, profile_id: int) -> list[TreatmentCourse]:
+    return list((await session.execute(select(TreatmentCourse).where(TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True).order_by(TreatmentCourse.start_date.desc().nullslast(), TreatmentCourse.id.desc()))).scalars().all())
+
+
+async def create_course(session: AsyncSession, profile_id: int, name: str, start_date: date | None, end_date: date | None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse:
+    c = TreatmentCourse(profile_id=profile_id, name=name.strip() or "Курс лечения", start_date=start_date, end_date=end_date, doctor=doctor or "", comment=comment or "", active=True)
+    session.add(c)
+    await session.flush()
+    await log_action(session, profile_id, actor_tg_id, "course_created", "course", c.id, f"Создан курс: {c.name}")
+    await session.commit()
+    return c
+
+
+async def update_course(session: AsyncSession, profile_id: int, course_id: int, name: str, start_date: date | None, end_date: date | None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse | None:
+    c = (await session.execute(select(TreatmentCourse).where(TreatmentCourse.id == course_id, TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True))).scalar_one_or_none()
+    if not c:
+        return None
+    c.name = name.strip() or c.name
+    c.start_date = start_date
+    c.end_date = end_date
+    c.doctor = doctor or ""
+    c.comment = comment or ""
+    await log_action(session, profile_id, actor_tg_id, "course_updated", "course", c.id, f"Изменен курс: {c.name}")
+    await session.commit()
+    return c
+
+
+async def deactivate_course(session: AsyncSession, profile_id: int, course_id: int, actor_tg_id: int | None = None, disable_schedules: bool = True) -> TreatmentCourse | None:
+    c = (await session.execute(select(TreatmentCourse).where(TreatmentCourse.id == course_id, TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True))).scalar_one_or_none()
+    if not c:
+        return None
+    c.active = False
+    if disable_schedules:
+        rows = (await session.execute(select(Schedule).where(Schedule.course_id == course_id, Schedule.profile_id == profile_id, Schedule.active == True))).scalars().all()
+        for r in rows:
+            r.active = False
+    await log_action(session, profile_id, actor_tg_id, "course_deleted", "course", c.id, f"Завершен/удален курс: {c.name}")
+    await session.commit()
+    return c
+
+
+async def set_meal_time_for_day(session: AsyncSession, profile_id: int, meal_date: date, meal_name: str, time_local: str, actor_tg_id: int | None = None) -> MealOverride:
+    row = (await session.execute(select(MealOverride).where(MealOverride.profile_id == profile_id, MealOverride.meal_date == meal_date, MealOverride.meal_name == meal_name))).scalar_one_or_none()
+    if not row:
+        row = MealOverride(profile_id=profile_id, meal_date=meal_date, meal_name=meal_name, time_local=time_local)
+        session.add(row)
+    else:
+        row.time_local = time_local
+    await log_action(session, profile_id, actor_tg_id, "meal_time_changed", "meal_override", row.id, f"{meal_name} {meal_date.isoformat()} → {time_local}")
+    await session.commit()
+    return row
+
+
+async def get_meal_overrides_for_day(session: AsyncSession, profile_id: int, meal_date: date) -> list[MealOverride]:
+    return list((await session.execute(select(MealOverride).where(MealOverride.profile_id == profile_id, MealOverride.meal_date == meal_date).order_by(MealOverride.meal_name))).scalars().all())
+
+
 SKIP_TEXTS = [
     "🟡 Отметил как пропущено. Главное — честная статистика, без нее аптечный штаб слепнет.",
     "📝 Пропуск сохранен. Не ругаемся, фиксируем факт и идем дальше по плану.",
@@ -216,6 +273,38 @@ def offset_hhmm(base: str, minutes: int) -> str:
     return d.strftime("%H:%M")
 
 
+def meal_base_time(meal_name: str) -> str:
+    return {
+        "breakfast": settings.default_breakfast_time,
+        "lunch": settings.default_lunch_time,
+        "dinner": settings.default_dinner_time,
+    }.get(meal_name or "", settings.default_breakfast_time)
+
+
+async def schedule_due_hhmm(session: AsyncSession, sched: Schedule, day: date) -> str:
+    template = getattr(sched, "timing_template", None) or "fixed"
+    if template == "fixed" or not getattr(sched, "meal_name", ""):
+        return sched.time_local
+    override = (await session.execute(select(MealOverride).where(
+        MealOverride.profile_id == sched.profile_id,
+        MealOverride.meal_date == day,
+        MealOverride.meal_name == sched.meal_name,
+    ))).scalar_one_or_none()
+    base = override.time_local if override else meal_base_time(sched.meal_name)
+    return offset_hhmm(base, int(getattr(sched, "meal_offset_minutes", 0) or 0))
+
+
+def normalize_recurrence(kind: str | None, interval_days: int | None) -> tuple[str, int]:
+    kind = (kind or "daily").strip().lower()
+    if kind == "weekly":
+        return "weekly", max(7, int(interval_days or 7))
+    if kind == "monthly":
+        return "monthly", 30
+    if kind == "specific_dates":
+        return "specific_dates", 1
+    return "daily", max(1, int(interval_days or 1))
+
+
 async def upsert_medicine(session: AsyncSession, name: str, dose: str) -> Medicine:
     med = (await session.execute(select(Medicine).where(Medicine.name == name))).scalar_one_or_none()
     if med:
@@ -239,10 +328,17 @@ async def add_schedule(
     end_date: date | None = None,
     recurrence_type: str = "daily",
     recurrence_interval_days: int = 1,
+    course_id: int | None = None,
+    weekdays: str = "",
+    specific_dates: str = "",
+    timing_template: str = "fixed",
+    meal_name: str = "",
+    meal_offset_minutes: int = 0,
 ) -> Schedule:
     med = await upsert_medicine(session, name, dose)
     item = Schedule(
         profile_id=profile_id,
+        course_id=course_id,
         medicine_id=med.id,
         dose=dose,
         time_local=hhmm,
@@ -251,6 +347,11 @@ async def add_schedule(
         end_date=end_date,
         recurrence_type=recurrence_type or "daily",
         recurrence_interval_days=recurrence_interval_days or 1,
+        weekdays=weekdays or "",
+        specific_dates=specific_dates or "",
+        timing_template=timing_template or "fixed",
+        meal_name=meal_name or "",
+        meal_offset_minutes=meal_offset_minutes or 0,
     )
     session.add(item)
     await session.flush()
@@ -302,14 +403,25 @@ async def seed_default_schedule(session: AsyncSession, replace: bool = False) ->
 
 def schedule_applies_on_day(sched: Schedule, day: date) -> bool:
     start = sched.start_date or datetime.now(TZ).date()
+    if sched.end_date and day > sched.end_date:
+        return False
+    if day < start:
+        return False
     recurrence_type = (getattr(sched, "recurrence_type", None) or "daily")
-    interval = int(getattr(sched, "recurrence_interval_days", None) or 1)
+    if recurrence_type == "specific_dates":
+        values = {x.strip() for x in (getattr(sched, "specific_dates", "") or "").split(",") if x.strip()}
+        return day.isoformat() in values
+    weekdays = (getattr(sched, "weekdays", "") or "").strip()
+    if weekdays:
+        allowed = {int(x) for x in weekdays.split(",") if x.strip().isdigit()}
+        if allowed and day.weekday() not in allowed:
+            return False
     if recurrence_type == "monthly":
         return day.day == start.day
+    interval = int(getattr(sched, "recurrence_interval_days", None) or (7 if recurrence_type == "weekly" else 1))
     delta_days = (day - start).days
-    if delta_days < 0:
-        return False
     return delta_days % max(1, interval) == 0
+
 
 async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
     today = datetime.now(TZ).date()
@@ -323,7 +435,8 @@ async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
                 continue
             if not schedule_applies_on_day(sched, day):
                 continue
-            due = local_dt(day, sched.time_local)
+            hhmm = await schedule_due_hhmm(session, sched, day)
+            due = local_dt(day, hhmm)
             exists = (await session.execute(
                 select(DoseEvent.id).where(DoseEvent.schedule_id == sched.id, DoseEvent.due_at == due)
             )).first()
@@ -608,6 +721,12 @@ async def update_schedule(
     end_date: date | None = None,
     recurrence_type: str | None = None,
     recurrence_interval_days: int | None = None,
+    course_id: int | None = None,
+    weekdays: str | None = None,
+    specific_dates: str | None = None,
+    timing_template: str | None = None,
+    meal_name: str | None = None,
+    meal_offset_minutes: int | None = None,
 ) -> Schedule | None:
     sched = (await session.execute(
         select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.id == schedule_id)
@@ -625,6 +744,12 @@ async def update_schedule(
         sched.recurrence_type = recurrence_type or "daily"
     if recurrence_interval_days is not None:
         sched.recurrence_interval_days = recurrence_interval_days or 1
+    sched.course_id = course_id
+    sched.weekdays = weekdays or ""
+    sched.specific_dates = specific_dates or ""
+    sched.timing_template = timing_template or "fixed"
+    sched.meal_name = meal_name or ""
+    sched.meal_offset_minutes = meal_offset_minutes or 0
     sched.active = True
 
     # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.

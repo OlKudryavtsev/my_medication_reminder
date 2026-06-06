@@ -45,6 +45,30 @@ class Profile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class TreatmentCourse(Base):
+    __tablename__ = "treatment_courses"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    doctor: Mapped[str] = mapped_column(String(255), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MealOverride(Base):
+    __tablename__ = "meal_overrides"
+    __table_args__ = (UniqueConstraint("profile_id", "meal_date", "meal_name", name="uq_profile_meal_day"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    meal_date: Mapped[date] = mapped_column(Date, index=True)
+    meal_name: Mapped[str] = mapped_column(String(20), default="lunch")  # breakfast/lunch/dinner
+    time_local: Mapped[str] = mapped_column(String(5))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Medicine(Base):
     __tablename__ = "medicines"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -58,6 +82,7 @@ class Schedule(Base):
     __tablename__ = "schedules"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    course_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     medicine_id: Mapped[int] = mapped_column(ForeignKey("medicines.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(String(255), default="")
     dose: Mapped[str] = mapped_column(String(255), default="")
@@ -66,6 +91,11 @@ class Schedule(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     recurrence_type: Mapped[str] = mapped_column(String(20), default="daily")  # daily/weekly/monthly
     recurrence_interval_days: Mapped[int] = mapped_column(Integer, default=1)
+    weekdays: Mapped[str] = mapped_column(String(40), default="")  # 0,1,2 for Mon..Sun
+    specific_dates: Mapped[str] = mapped_column(Text, default="")  # YYYY-MM-DD,YYYY-MM-DD
+    timing_template: Mapped[str] = mapped_column(String(40), default="fixed")  # fixed/before_meal/with_meal/after_meal
+    meal_name: Mapped[str] = mapped_column(String(20), default="")  # breakfast/lunch/dinner
+    meal_offset_minutes: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     medicine: Mapped[Medicine] = relationship()
 
@@ -130,10 +160,16 @@ async def run_light_migrations(conn) -> None:
     dt_type = "TIMESTAMP WITH TIME ZONE" if dialect != "sqlite" else "DATETIME"
     await _add_column_if_missing(conn, "users", "active_profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "profile_id", "INTEGER")
+    await _add_column_if_missing(conn, "schedules", "course_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "start_date", date_type)
     await _add_column_if_missing(conn, "schedules", "end_date", date_type)
     await _add_column_if_missing(conn, "schedules", "recurrence_type", "VARCHAR(20) DEFAULT 'daily'")
     await _add_column_if_missing(conn, "schedules", "recurrence_interval_days", "INTEGER DEFAULT 1")
+    await _add_column_if_missing(conn, "schedules", "weekdays", "VARCHAR(40) DEFAULT ''")
+    await _add_column_if_missing(conn, "schedules", "specific_dates", "TEXT DEFAULT ''")
+    await _add_column_if_missing(conn, "schedules", "timing_template", "VARCHAR(40) DEFAULT 'fixed'")
+    await _add_column_if_missing(conn, "schedules", "meal_name", "VARCHAR(20) DEFAULT ''")
+    await _add_column_if_missing(conn, "schedules", "meal_offset_minutes", "INTEGER DEFAULT 0")
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)

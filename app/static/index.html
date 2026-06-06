@@ -65,10 +65,19 @@
       <section id="pageStats" class="page hidden"><div class="card"><h2>Статистика за 30 дней</h2><div id="stats">Загрузка...</div></div></section>
       <section id="pageHistory" class="page hidden"><div class="card"><h2>История по препарату</h2><label>Препарат</label><select id="medicineSelect" onchange="loadHistory()"></select><div id="history" class="muted" style="margin-top:10px">Выберите препарат</div></div></section>
       <section id="pageAdmin" class="page hidden">
+        <div class="card"><h2>Курсы лечения</h2><div id="coursesBox">Загрузка...</div></div>
+        <div class="card"><h2>Сегодня время еды</h2>
+          <div class="dateLine"><div><label>Дата</label><input id="mealDate" type="date" /></div><div><label>Прием пищи</label><select id="mealName"><option value="breakfast">Завтрак</option><option value="lunch">Обед</option><option value="dinner">Ужин</option></select></div></div>
+          <div class="fieldLine"><label>Новое время</label><input id="mealTime" type="time" value="13:30" /></div>
+          <button class="wide gray" onclick="saveMealOverride()" style="margin-top:8px">Пересчитать приемы на сегодня</button>
+          <div class="muted" style="font-size:12px;margin-top:8px">Для лекарств с шаблоном «до/во время/после еды» время на выбранный день будет рассчитано от фактического времени еды.</div>
+        </div>
         <div class="card"><h2>Добавить лекарство</h2>
           <div class="addForm">
             <div class="fieldLine"><label>Лекарство</label><input id="name" placeholder="Аквадетрим" /></div>
             <div class="fieldLine"><label>Доза</label><input id="dose" placeholder="2 капли" /></div>
+            <div class="fieldLine"><label>Курс</label><select id="courseSelect"><option value="">Без курса</option></select></div>
+            <div class="fieldLine"><label>Шаблон</label><select id="timingTemplate" onchange="renderFrequencySlots()"><option value="fixed">Фиксированное время</option><option value="before_meal">За 30 мин до еды</option><option value="with_meal">Во время еды</option><option value="after_meal">После еды</option></select></div>
             <div class="fieldLine"><label>Периодичность</label><select id="frequency" onchange="renderFrequencySlots()">
               <option value="daily:1:1">1 раз в день</option>
               <option value="daily:1:2">2 раза в день</option>
@@ -76,7 +85,12 @@
               <option value="weekly:7:1">1 раз в неделю</option>
               <option value="weekly:14:1">1 раз в 2 недели</option>
               <option value="monthly:30:1">1 раз в месяц</option>
+              <option value="daily:2:1">1 раз в 2 дня</option>
+              <option value="daily:3:1">1 раз в 3 дня</option>
+              <option value="specific_dates:1:1">В конкретные даты</option>
             </select></div>
+            <div class="fieldLine"><label>Дни недели</label><select id="weekdays" multiple size="3"><option value="0">Пн</option><option value="1">Вт</option><option value="2">Ср</option><option value="3">Чт</option><option value="4">Пт</option><option value="5">Сб</option><option value="6">Вс</option></select></div>
+            <div class="fieldLine"><label>Даты</label><input id="specificDates" placeholder="2026-06-10,2026-06-15" /></div>
             <div id="frequencySlots" class="frequencySlots"></div>
             <div class="dateLine"><div><label>Дата начала</label><input id="startDate" type="date" /></div><div><label>Дата окончания</label><input id="endDate" type="date" /></div></div>
             <button class="wide" onclick="addSchedule()" style="margin-top:10px">Добавить лекарство</button>
@@ -164,7 +178,7 @@
   }
 
   function pageId(name){return 'page'+name[0].toUpperCase()+name.slice(1)} function tabId(name){return 'tab'+name[0].toUpperCase()+name.slice(1)}
-  function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin'){loadProfileAdmin();loadSchedules();loadAudit();}window.scrollTo({top:0,behavior:'smooth'});}
+  function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin'){loadCourses();loadMealOverrides();loadProfileAdmin();loadSchedules();loadAudit();}window.scrollTo({top:0,behavior:'smooth'});}
   function setTodayFilter(f){todayFilter=f;localStorage.setItem('todayFilter',f);renderToday()}
   function applyFilter(rows){if(todayFilter==='all')return rows;if(todayFilter==='skipped')return rows.filter(r=>r.status==='skipped');if(todayFilter==='taken')return rows.filter(r=>r.status==='taken');if(todayFilter==='snoozed')return rows.filter(r=>r.status==='pending'&&r.postponed_until);return rows.filter(r=>r.status==='pending')}
   function statusText(r){if(r.status==='taken')return '✅ принято в '+(r.taken_at||'—');if(r.status==='skipped')return '⏭️ пропущено '+(r.skipped_at||'');if(r.postponed_until)return '😴 отложено до '+r.postponed_until;return '⏳ ждет отметки'}
@@ -242,6 +256,20 @@
     const data=await api('/api/events/batch/snooze',{method:'POST',body:JSON.stringify({ids:rows.map(r=>r.id)})});
     toast(data.message||`Отложено приемов: ${rows.length}`); await loadToday(); loadAudit();
   }
+  async function loadCourses(){
+    if(!me?.can_manage_current_profile)return;
+    const rows=await api('/api/courses');
+    const sel=document.getElementById('courseSelect');
+    if(sel) sel.innerHTML='<option value="">Без курса</option>'+rows.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    const root=document.getElementById('coursesBox');
+    root.innerHTML=`<div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, ЖКТ июнь"></div><div class="dateLine"><div><label>Дата начала</label><input id="courseStart" type="date"></div><div><label>Дата окончания</label><input id="courseEnd" type="date"></div></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Добавить курс</button><div class="adminList" style="margin-top:10px">${rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.start_date||'—')} — ${escapeHtml(c.end_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeHtml(c.name)}', '${c.start_date||''}', '${c.end_date||''}', '${escapeHtml(c.doctor||'')}', '${escapeHtml(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить курс</button></div></div>`).join('')}</div>`;
+  }
+  async function addCourse(){const p={name:document.getElementById('courseName').value.trim(),start_date:document.getElementById('courseStart').value||null,end_date:document.getElementById('courseEnd').value||null,doctor:document.getElementById('courseDoctor').value.trim(),comment:document.getElementById('courseComment').value.trim()}; if(!p.name){toast('Укажите название курса');return} await api('/api/courses',{method:'POST',body:JSON.stringify(p)}); toast('Курс добавлен'); await loadCourses(); await loadAudit()}
+  async function editCourse(id,name,start,end,doctor,comment){const body=`<label>Название</label><input id="cName" value="${name}"><div class="dateLine"><div><label>Дата начала</label><input id="cStart" type="date" value="${start}"></div><div><label>Дата окончания</label><input id="cEnd" type="date" value="${end}"></div></div><label>Врач</label><input id="cDoctor" value="${doctor}"><label>Комментарий</label><input id="cComment" value="${comment}">`; const ok=await openModal('Изменить курс', body, ()=>closeModal({name:document.getElementById('cName').value.trim(),start_date:document.getElementById('cStart').value||null,end_date:document.getElementById('cEnd').value||null,doctor:document.getElementById('cDoctor').value.trim(),comment:document.getElementById('cComment').value.trim()})); if(!ok)return; await api('/api/courses/'+id,{method:'PUT',body:JSON.stringify(ok)}); toast('Курс обновлен'); await loadCourses(); await loadAudit()}
+  async function deleteCourse(id){const ok=await confirmAction('Удалить курс?', 'Курс будет отключен вместе с назначениями внутри него.', 'Действие попадет в журнал.'); if(!ok)return; await api('/api/courses/'+id,{method:'DELETE'}); toast('Курс удален'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit()}
+  async function loadMealOverrides(){const d=document.getElementById('mealDate'); if(d&&!d.value)d.value=new Date().toISOString().slice(0,10);}
+  async function saveMealOverride(){const p={meal_date:document.getElementById('mealDate').value,meal_name:document.getElementById('mealName').value,time_local:document.getElementById('mealTime').value}; if(!p.meal_date||!p.time_local){toast('Укажите дату и время');return} await api('/api/meal-overrides',{method:'POST',body:JSON.stringify(p)}); toast('Время еды сохранено'); await loadToday(); await loadAudit()}
+
   const editSchedules = new Set();
   const scheduleDrafts = new Map();
   function fieldHtml(id, value, editable, type='text'){
@@ -268,7 +296,9 @@
   function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday();loadAudit()}
   function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
-  function renderFrequencySlots(){const {count}=parseFrequency();const root=document.getElementById('frequencySlots');let defaults=['09:00','15:00','21:00'];root.innerHTML=Array.from({length:count},(_,i)=>`<div class="slotGroup"><div class="slotGroupTitle">Прием ${i+1}</div><div class="slotRow"><label>Время</label><input id="slotTime${i}" type="time" value="${defaults[i]||'09:00'}"></div><div class="slotRow"><label>Комментарий</label><input id="slotLabel${i}" placeholder="например, после еды"></div></div>`).join('')}
+  function mealForIndex(i){return ['breakfast','lunch','dinner'][i] || 'breakfast'}
+  function templateLabel(t, meal){const m={breakfast:'завтрак',lunch:'обед',dinner:'ужин'}[meal]||'еда'; return t==='before_meal'?`за 30 мин до: ${m}`:t==='with_meal'?`во время: ${m}`:t==='after_meal'?`после: ${m}`:''}
+  function renderFrequencySlots(){const {count}=parseFrequency();const root=document.getElementById('frequencySlots');const t=document.getElementById('timingTemplate')?.value||'fixed';let defaults=['09:00','15:00','21:00'];root.innerHTML=Array.from({length:count},(_,i)=>{const meal=mealForIndex(i); const templateControls=t==='fixed'?`<div class="slotRow"><label>Время</label><input id="slotTime${i}" type="time" value="${defaults[i]||'09:00'}"></div><div class="slotRow"><label>Комментарий</label><input id="slotLabel${i}" placeholder="например, после еды"></div>`:`<div class="slotRow"><label>Еда</label><select id="slotMeal${i}"><option value="breakfast" ${meal==='breakfast'?'selected':''}>Завтрак</option><option value="lunch" ${meal==='lunch'?'selected':''}>Обед</option><option value="dinner" ${meal==='dinner'?'selected':''}>Ужин</option></select></div><div class="slotRow"><label>Комментарий</label><input id="slotLabel${i}" placeholder="${templateLabel(t,meal)}"></div>`; return `<div class="slotGroup"><div class="slotGroupTitle">Прием ${i+1}</div>${templateControls}</div>`}).join('')}
   let addScheduleInProgress=false;
   async function addSchedule(){
     if(!me?.can_manage_current_profile){toast('Нет доступа к управлению этим профилем');return}
@@ -276,13 +306,18 @@
     const f=parseFrequency();
     const entries=[];
     const seen=new Set();
+    const timingTemplate=document.getElementById('timingTemplate').value;
     for(let i=0;i<f.count;i++){
-      const time=document.getElementById('slotTime'+i).value;
-      const label=document.getElementById('slotLabel'+i).value.trim();
-      const key=`${time}|${label||time}`;
-      if(time && !seen.has(key)){seen.add(key);entries.push({time_local:time,label:label||time})}
+      const mealEl=document.getElementById('slotMeal'+i);
+      const meal=mealEl?mealEl.value:'';
+      const offset=timingTemplate==='before_meal'?-30:(timingTemplate==='after_meal'?10:0);
+      const time=timingTemplate==='fixed'?document.getElementById('slotTime'+i).value:({breakfast:'08:00',lunch:'13:30',dinner:'19:30'}[meal]||'09:00');
+      const label=(document.getElementById('slotLabel'+i).value.trim() || (timingTemplate==='fixed'?time:templateLabel(timingTemplate,meal)));
+      const key=`${time}|${label}|${timingTemplate}|${meal}|${offset}`;
+      if(time && !seen.has(key)){seen.add(key);entries.push({time_local:time,label:label||time,timing_template:timingTemplate,meal_name:meal,meal_offset_minutes:offset})}
     }
-    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),start_date:document.getElementById('startDate').value||null,end_date:document.getElementById('endDate').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,entries};
+    const weekdays=[...document.getElementById('weekdays').selectedOptions].map(o=>o.value).join(',');
+    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),course_id:document.getElementById('courseSelect').value?Number(document.getElementById('courseSelect').value):null,start_date:document.getElementById('startDate').value||null,end_date:document.getElementById('endDate').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,weekdays,specific_dates:document.getElementById('specificDates').value.trim(),entries};
     if(!payload.name||!payload.dose||!entries.length){toast('Заполните лекарство, дозу и хотя бы одно время');return}
     addScheduleInProgress=true;
     try{

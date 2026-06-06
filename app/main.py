@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -49,6 +49,13 @@ from .service import (
     deactivate_profile,
     get_audit_log,
     log_action,
+    get_courses,
+    create_course,
+    update_course,
+    deactivate_course,
+    set_meal_time_for_day,
+    get_meal_overrides_for_day,
+    normalize_recurrence,
 )
 
 settings = get_settings()
@@ -62,6 +69,9 @@ polling_task: asyncio.Task | None = None
 class ScheduleEntryPayload(BaseModel):
     time_local: str
     label: str = ""
+    timing_template: str = "fixed"
+    meal_name: str = ""
+    meal_offset_minutes: int = 0
 
 
 class AddSchedulePayload(BaseModel):
@@ -73,6 +83,9 @@ class AddSchedulePayload(BaseModel):
     end_date: str | None = None
     recurrence_type: str = "daily"
     recurrence_interval_days: int = 1
+    course_id: int | None = None
+    weekdays: str = ""
+    specific_dates: str = ""
     entries: list[ScheduleEntryPayload] | None = None
 
 
@@ -100,6 +113,20 @@ class ActiveProfilePayload(BaseModel):
 
 class ProfilePayload(BaseModel):
     name: str
+
+
+class CoursePayload(BaseModel):
+    name: str
+    start_date: str | None = None
+    end_date: str | None = None
+    doctor: str = ""
+    comment: str = ""
+
+
+class MealTimePayload(BaseModel):
+    meal_date: str
+    meal_name: str
+    time_local: str
 
 
 def role_for_tg_id(tg_id: int | None) -> str:
@@ -550,6 +577,12 @@ async def api_schedules(request: Request):
                 "end_date": r.end_date.isoformat() if r.end_date else "",
                 "recurrence_type": r.recurrence_type or "daily",
                 "recurrence_interval_days": r.recurrence_interval_days or 1,
+                "course_id": r.course_id,
+                "weekdays": r.weekdays or "",
+                "specific_dates": r.specific_dates or "",
+                "timing_template": r.timing_template or "fixed",
+                "meal_name": r.meal_name or "",
+                "meal_offset_minutes": r.meal_offset_minutes or 0,
                 "active": r.active,
             }
             for r in rows
@@ -562,9 +595,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         tg_id, role, profile_id = await require_profile_manager(request, session)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
-    recurrence_type = (payload.recurrence_type or "daily").strip().lower()
-    recurrence_interval_days = int(payload.recurrence_interval_days or 1)
-    if recurrence_type not in {"daily", "weekly", "monthly"}:
+    recurrence_type, recurrence_interval_days = normalize_recurrence(payload.recurrence_type, payload.recurrence_interval_days)
+    if recurrence_type not in {"daily", "weekly", "monthly", "specific_dates"}:
         raise HTTPException(status_code=400, detail="Unsupported recurrence_type")
     entries = payload.entries or []
     if not entries and payload.time_local:
@@ -604,6 +636,12 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                     Schedule.end_date == end_date,
                     Schedule.recurrence_type == recurrence_type,
                     Schedule.recurrence_interval_days == recurrence_interval_days,
+                    Schedule.course_id == payload.course_id,
+                    Schedule.weekdays == (payload.weekdays or ""),
+                    Schedule.specific_dates == (payload.specific_dates or ""),
+                    Schedule.timing_template == ((entry.timing_template or "fixed")),
+                    Schedule.meal_name == (entry.meal_name or ""),
+                    Schedule.meal_offset_minutes == (entry.meal_offset_minutes or 0),
                 )
             )).scalar_one_or_none()
             if existing:
@@ -620,6 +658,12 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 end_date=end_date,
                 recurrence_type=recurrence_type,
                 recurrence_interval_days=recurrence_interval_days,
+                course_id=payload.course_id,
+                weekdays=payload.weekdays or "",
+                specific_dates=payload.specific_dates or "",
+                timing_template=entry.timing_template or "fixed",
+                meal_name=entry.meal_name or "",
+                meal_offset_minutes=entry.meal_offset_minutes or 0,
             )
             session.add(sched)
             await session.flush()
@@ -653,6 +697,12 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
             end_date=end_date,
             recurrence_type=payload.recurrence_type,
             recurrence_interval_days=payload.recurrence_interval_days,
+            course_id=payload.course_id,
+            weekdays=payload.weekdays,
+            specific_dates=payload.specific_dates,
+            timing_template=(payload.entries[0].timing_template if payload.entries else "fixed"),
+            meal_name=(payload.entries[0].meal_name if payload.entries else ""),
+            meal_offset_minutes=(payload.entries[0].meal_offset_minutes if payload.entries else 0),
         )
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
