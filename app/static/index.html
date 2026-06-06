@@ -51,6 +51,11 @@
 
 
     .adminTabs{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin:0 0 10px;background:var(--soft);border:1px solid var(--line);border-radius:16px;padding:4px}
+
+    .collapseToggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--brand2);color:var(--brand);border:1px solid rgba(47,128,237,.18);box-shadow:none;margin:2px 0 10px;min-height:38px;border-radius:14px;font-size:13px}
+    .collapseToggle span{font-weight:900}.collapseToggle .chev{font-size:16px;line-height:1}
+    .searchFilter{margin:0 0 16px}.searchFilter label{margin-top:0}.searchSelect{margin-bottom:14px;background:var(--card)}
+    .listWithFilter{margin-top:12px}.addForm.hidden{display:none!important}.courseAddForm.hidden{display:none!important}
     .adminTabBtn{min-height:34px;border-radius:12px;background:transparent;color:var(--muted);box-shadow:none;font-size:12px;font-weight:850;padding:8px}
     .adminTabBtn.active{background:var(--card);color:var(--brand);box-shadow:0 3px 12px rgba(15,23,42,.08)}
     .adminPanel.hidden{display:none!important}.attachments{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.fileLink{display:inline-flex;padding:6px 9px;border-radius:999px;background:var(--brand2);color:var(--brand);font-size:12px;font-weight:800;text-decoration:none}
@@ -78,11 +83,10 @@
         </div>
         <div id="adminPanelAssignments" class="adminPanel">
           <div class="card"><h2>Назначения</h2><div id="coursesBox">Загрузка...</div></div>
-          <div class="card"><h2>Отчет для врача</h2><div class="muted">Экспорт статистики и истории по текущему профилю.</div><div class="downloadGrid"><button onclick="downloadReport('pdf')">PDF</button><button class="gray" onclick="downloadReport('xlsx')">Excel</button></div></div>
         </div>
         <div id="adminPanelMeds" class="adminPanel hidden">
-          <div class="card"><h2>Добавить лекарство</h2>
-            <div class="addForm">
+          <div class="card"><button id="addMedicineToggle" class="collapseToggle" onclick="toggleAddMedicineForm()"><span>Добавить лекарство</span><span class="chev">＋</span></button>
+            <div id="addMedicineForm" class="addForm hidden">
               <div class="fieldLine"><label>Лекарство</label><input id="name" placeholder="Аквадетрим" /></div>
               <div class="fieldLine"><label>Доза</label><input id="dose" placeholder="2 капли" /></div>
               <div class="fieldLine"><label>Назначение</label><select id="courseSelect"><option value="">Без назначения</option></select></div>
@@ -103,12 +107,12 @@
               <button class="wide" onclick="addSchedule()" style="margin-top:10px">Добавить лекарство</button>
             </div>
           </div>
-          <div class="card"><h2>Текущее расписание</h2><input id="scheduleSearch" class="searchBox" placeholder="Поиск по лекарству" oninput="loadSchedules()"><div id="schedules">Загрузка...</div></div>
+          <div class="card"><h2>Текущее расписание</h2><div class="searchFilter"><label>Фильтр по лекарству</label><select id="scheduleSearch" class="searchSelect" onchange="loadSchedules()"><option value="">Все лекарства</option></select></div><div id="schedules" class="listWithFilter">Загрузка...</div></div>
           <div class="card"><h2>Журнал изменений</h2><div id="auditLog">Загрузка...</div></div>
         </div>
         <div id="adminPanelInventory" class="adminPanel hidden">
           <div class="card"><h2>Аптечка</h2>
-            <input id="inventorySearch" class="searchBox" placeholder="Поиск по лекарству" oninput="loadInventory()">
+            <div class="searchFilter"><label>Фильтр по лекарству</label><select id="inventorySearch" class="searchSelect" onchange="loadInventory()"><option value="">Все лекарства</option></select></div>
             <div class="addForm">
               <div class="fieldLine"><label>Лекарство</label><input id="invName" placeholder="Панкреатин"></div>
               <div class="fieldLine"><label>Остаток</label><input id="invQty" type="number" min="0" value="0"></div>
@@ -142,7 +146,7 @@
   <div class="toast" id="toast"></div>
 <script>
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
-  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; localStorage.setItem('todayFilter','pending');
+  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
   function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('theme',t);document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙'}
@@ -296,15 +300,40 @@
     const data=await api('/api/events/batch/snooze',{method:'POST',body:JSON.stringify({ids:rows.map(r=>r.id)})});
     toast(data.message||`Отложено приемов: ${rows.length}`); await loadToday(); loadAudit();
   }
+  function setCollapseButton(btnId, open, openText, closedText){
+    const btn=document.getElementById(btnId); if(!btn)return;
+    const label=btn.querySelector('span:first-child'); const chev=btn.querySelector('.chev');
+    if(label) label.textContent=open?openText:closedText;
+    if(chev) chev.textContent=open?'−':'＋';
+  }
+  function toggleAddMedicineForm(){
+    addMedicineOpen=!addMedicineOpen;
+    document.getElementById('addMedicineForm')?.classList.toggle('hidden', !addMedicineOpen);
+    setCollapseButton('addMedicineToggle', addMedicineOpen, 'Скрыть форму добавления', 'Добавить лекарство');
+  }
+  function toggleAddAssignmentForm(){
+    addAssignmentOpen=!addAssignmentOpen;
+    document.getElementById('courseAddForm')?.classList.toggle('hidden', !addAssignmentOpen);
+    setCollapseButton('courseAddToggle', addAssignmentOpen, 'Скрыть форму добавления', 'Добавить назначение');
+  }
+  function populateMedicineFilter(selectId, rows, getName){
+    const sel=document.getElementById(selectId); if(!sel)return '';
+    const current=sel.value || '';
+    const names=[...new Set(rows.map(getName).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+    sel.innerHTML='<option value="">Все лекарства</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
+    if(current && names.includes(current)) sel.value=current;
+    else sel.value='';
+    return sel.value || '';
+  }
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
     const sel=document.getElementById('courseSelect');
     if(sel) sel.innerHTML='<option value="">Без назначения</option>'+rows.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     const root=document.getElementById('coursesBox');
-    root.innerHTML=`<div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Добавить назначение</button><div class="adminList" style="margin-top:10px">${rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<a class="fileLink" target="_blank" href="/api/attachments/${a.id}">${escapeHtml(a.filename)}</a>`).join('')}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join('')}</div>`;
+    root.innerHTML=`<button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<a class="fileLink" target="_blank" href="/api/attachments/${a.id}">${escapeHtml(a.filename)}</a>`).join('')}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
   }
-  async function addCourse(){const p={name:document.getElementById('courseName').value.trim(),assignment_date:document.getElementById('courseDate').value||null,doctor:document.getElementById('courseDoctor').value.trim(),comment:document.getElementById('courseComment').value.trim()}; if(!p.name){toast('Укажите название назначения');return} const created=await api('/api/courses',{method:'POST',body:JSON.stringify(p)}); const file=document.getElementById('courseFile').files[0]; if(file){await uploadFileToCourse(created.id,file)} toast('Назначение добавлено'); await loadCourses(); await loadAudit()}
+  async function addCourse(){const p={name:document.getElementById('courseName').value.trim(),assignment_date:document.getElementById('courseDate').value||null,doctor:document.getElementById('courseDoctor').value.trim(),comment:document.getElementById('courseComment').value.trim()}; if(!p.name){toast('Укажите название назначения');return} const created=await api('/api/courses',{method:'POST',body:JSON.stringify(p)}); const file=document.getElementById('courseFile').files[0]; if(file){await uploadFileToCourse(created.id,file)} toast('Назначение добавлено'); addAssignmentOpen=false; await loadCourses(); await loadAudit()}
   async function editCourse(id,name,assignmentDate,doctor,comment){const body=`<label>Название</label><input id="cName" value="${name}"><label>Дата назначения</label><input id="cDate" type="date" value="${assignmentDate}"><label>Врач</label><input id="cDoctor" value="${doctor}"><label>Комментарий</label><input id="cComment" value="${comment}">`; const ok=await openModal('Изменить назначение', body, ()=>closeModal({name:document.getElementById('cName').value.trim(),assignment_date:document.getElementById('cDate').value||null,doctor:document.getElementById('cDoctor').value.trim(),comment:document.getElementById('cComment').value.trim()})); if(!ok)return; await api('/api/courses/'+id,{method:'PUT',body:JSON.stringify(ok)}); toast('Назначение обновлено'); await loadCourses(); await loadAudit()}
   async function deleteCourse(id){const ok=await confirmAction('Удалить назначение?', 'Назначение будет отключено вместе с лекарствами внутри него.', 'Действие попадет в журнал.'); if(!ok)return; await api('/api/courses/'+id,{method:'DELETE'}); toast('Назначение удалено'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit()}
   async function uploadFileToCourse(id,file){const fd=new FormData();fd.append('file',file);await api('/api/courses/'+id+'/attachments',{method:'POST',body:fd,headers:{}})}
@@ -331,7 +360,7 @@
   }
   function enableScheduleEdit(id){editSchedules.add(id);loadSchedules()}
   function cancelScheduleEdit(id){editSchedules.delete(id);scheduleDrafts.delete(id);loadSchedules()}
-  async function loadSchedules(){if(!me?.can_manage_current_profile)return;let rows=await api('/api/schedules');const q=(document.getElementById('scheduleSearch')?.value||'').toLowerCase();if(q)rows=rows.filter(r=>(r.name||'').toLowerCase().includes(q));const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
+  async function loadSchedules(){if(!me?.can_manage_current_profile)return;let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
   function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday();loadAudit()}
   function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
@@ -365,6 +394,9 @@
       ['name','dose','medStart','medEnd'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
       document.getElementById('frequency').value='daily:1:1';
       renderFrequencySlots();
+      addMedicineOpen=false;
+      document.getElementById('addMedicineForm')?.classList.add('hidden');
+      setCollapseButton('addMedicineToggle', false, 'Скрыть форму добавления', 'Добавить лекарство');
       await loadSchedules();
       await loadToday();
       await loadAudit();
@@ -385,8 +417,9 @@
 
   async function loadInventory(){
     if(!me?.can_manage_current_profile)return;
-    const q=encodeURIComponent(document.getElementById('inventorySearch')?.value||'');
-    const rows=await api('/api/inventory?search='+q);
+    let rows=await api('/api/inventory');
+    const selected=populateMedicineFilter('inventorySearch', rows, i=>i.name||'');
+    if(selected)rows=rows.filter(i=>(i.name||'')===selected);
     const root=document.getElementById('inventoryBox');
     if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
     root.innerHTML=`<div class="adminList">${rows.map(i=>`<div class="formrow"><div class="inventoryRow">${i.photo_url?`<img class="inventoryPhoto" src="${i.photo_url}?profile_id=${currentProfileId}&t=${Date.now()}">`:`<div class="inventoryPhoto"></div>`}<div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div></div><div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeHtml(i.name)}', ${i.quantity}, '${escapeHtml(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div></div>`).join('')}</div>`;
