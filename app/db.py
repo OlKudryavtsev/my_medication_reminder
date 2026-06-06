@@ -69,6 +69,23 @@ class TreatmentAttachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class InventoryItem(Base):
+    __tablename__ = "inventory_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    medicine_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    unit_name: Mapped[str] = mapped_column(String(50), default="шт")
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    low_threshold: Mapped[int] = mapped_column(Integer, default=5)
+    photo_filename: Mapped[str] = mapped_column(String(255), default="")
+    photo_content_type: Mapped[str] = mapped_column(String(120), default="")
+    photo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    purchase_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MealOverride(Base):
     __tablename__ = "meal_overrides"
     __table_args__ = (UniqueConstraint("profile_id", "meal_date", "meal_name", name="uq_profile_meal_day"),)
@@ -125,6 +142,7 @@ class DoseEvent(Base):
     postponed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminder_count: Mapped[int] = mapped_column(Integer, default=0)
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    overdue_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     schedule: Mapped[Schedule] = relationship()
 
@@ -185,6 +203,7 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)
+    await _add_column_if_missing(conn, "dose_events", "overdue_alert_sent_at", dt_type)
 
 
 async def init_db() -> None:

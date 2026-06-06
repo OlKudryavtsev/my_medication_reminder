@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     reminder_interval_minutes: int = 7
     snooze_minutes: int = 30
     allow_dev_initdata: bool = False
+    overdue_alert_minutes: int = 30
+    low_stock_check_hour: int = 9
     default_breakfast_time: str = "08:00"
     default_lunch_time: str = "13:30"
     default_dinner_time: str = "19:30"

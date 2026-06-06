@@ -4,21 +4,22 @@ import asyncio
 import hmac
 import hashlib
 import json
-from datetime import datetime
+from io import BytesIO
+from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import FileResponse, ORJSONResponse, Response
+from fastapi.responses import FileResponse, ORJSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -57,6 +58,13 @@ from .service import (
     get_meal_overrides_for_day,
     normalize_recurrence,
     schedule_due_hhmm,
+    get_overdue_for_parent_alert,
+    overdue_alert_text,
+    skipped_notification_text,
+    get_evening_summary,
+    evening_summary_text,
+    get_inventory,
+    low_stock_items,
 )
 
 settings = get_settings()
@@ -127,6 +135,14 @@ class MealTimePayload(BaseModel):
     meal_date: str
     meal_name: str
     time_local: str
+
+
+class InventoryPayload(BaseModel):
+    name: str
+    quantity: int = 0
+    unit_name: str = "шт"
+    low_threshold: int = 5
+
 
 
 def role_for_tg_id(tg_id: int | None) -> str:
@@ -240,6 +256,72 @@ async def reminder_tick() -> None:
         await session.commit()
 
 
+async def overdue_alert_tick() -> None:
+    async with SessionLocal() as session:
+        events = await get_overdue_for_parent_alert(session)
+        groups: dict[tuple[int | None, datetime], list] = {}
+        for event in events:
+            groups.setdefault((event.schedule.profile_id, event.due_at), []).append(event)
+        now = datetime.now(TZ)
+        for (profile_id, due_at), rows in groups.items():
+            # Личный профиль родителя: тревога не нужна, напоминания и так уходят только владельцу.
+            profile = (await session.execute(select(Profile).where(Profile.id == profile_id))).scalar_one_or_none()
+            if profile and profile.kind == "personal":
+                for e in rows:
+                    e.overdue_alert_sent_at = now
+                continue
+            text = overdue_alert_text(rows)
+            for parent_id in settings.parents:
+                try:
+                    await bot.send_message(parent_id, text)
+                except Exception:
+                    pass
+            for e in rows:
+                e.overdue_alert_sent_at = now
+        await session.commit()
+
+
+async def low_stock_tick() -> None:
+    async with SessionLocal() as session:
+        rows = await low_stock_items(session)
+        now = datetime.now(TZ)
+        for item in rows:
+            profile = (await session.execute(select(Profile).where(Profile.id == item.profile_id))).scalar_one_or_none()
+            if not profile:
+                continue
+            if profile.kind == "personal" and profile.owner_tg_id:
+                recipients = [int(profile.owner_tg_id)]
+            else:
+                recipients = settings.parents
+            text = f"🛒 Нужно купить лекарство\n{item.name}: осталось {item.quantity} {item.unit_name or 'шт'}\nПорог напоминания: {item.low_threshold}"
+            for chat_id in recipients:
+                try:
+                    await bot.send_message(chat_id, text)
+                except Exception:
+                    pass
+            item.purchase_alert_sent_at = now
+        await session.commit()
+
+
+async def evening_summary_tick() -> None:
+    async with SessionLocal() as session:
+        profiles = (await session.execute(select(Profile).where(Profile.active == True))).scalars().all()
+        for profile in profiles:
+            summary = await get_evening_summary(session, profile.id)
+            if not summary["total"]:
+                continue
+            text = evening_summary_text(profile, summary)
+            if profile.kind == "personal" and profile.owner_tg_id:
+                recipients = [int(profile.owner_tg_id)]
+            else:
+                recipients = await profile_recipients(session, profile.id)
+            for chat_id in recipients:
+                try:
+                    await bot.send_message(chat_id, text)
+                except Exception:
+                    pass
+
+
 @app.on_event("startup")
 async def startup() -> None:
     global polling_task
@@ -249,6 +331,9 @@ async def startup() -> None:
         await seed_default_schedule(session)
         await ensure_events(session)
     scheduler.add_job(reminder_tick, "interval", minutes=1, id="reminder_tick", replace_existing=True)
+    scheduler.add_job(overdue_alert_tick, "interval", minutes=5, id="overdue_alert_tick", replace_existing=True)
+    scheduler.add_job(low_stock_tick, "cron", hour=settings.low_stock_check_hour, minute=0, id="low_stock_tick", replace_existing=True)
+    scheduler.add_job(evening_summary_tick, "cron", hour=23, minute=45, id="evening_summary_tick", replace_existing=True)
     scheduler.start()
     polling_task = asyncio.create_task(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
 
@@ -516,6 +601,16 @@ async def api_batch_skip(payload: BatchEventPayload, request: Request):
                 if event:
                     skipped.append(event)
         await log_action(session, profile_id, tg_id, "group_skipped", "dose_event", skipped[0].id if skipped else None, f"Групповой пропуск: {len(skipped)} прием(а)", commit=True)
+    if skipped:
+        async with SessionLocal() as session:
+            recipients = await profile_recipients(session, skipped[0].schedule.profile_id)
+        text = skipped_notification_text(skipped)
+        for parent_id in recipients:
+            if parent_id != tg_id:
+                try:
+                    await bot.send_message(parent_id, text)
+                except Exception:
+                    pass
     return {"ok": True, "count": len(skipped), "message": f"Пропущено приемов: {len(skipped)}"}
 
 
@@ -632,7 +727,7 @@ async def api_skip(event_id: int, payload: EventActionPayload, request: Request)
     for parent_id in recipients:
         if parent_id != tg_id:
             try:
-                await bot.send_message(parent_id, f"⏭️ В мини-приложении отмечен пропуск: {event_title(event)}")
+                await bot.send_message(parent_id, skipped_notification_text([event]))
             except Exception:
                 pass
     return {"ok": True, "message": "Пропуск сохранен"}
@@ -818,6 +913,176 @@ async def api_delete_schedule(schedule_id: int, request: Request):
         await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален прием из расписания", commit=False)
         await session.commit()
         return {"ok": True}
+
+
+@app.get("/api/inventory", response_class=ORJSONResponse)
+async def api_inventory(request: Request, search: str = ""):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        rows = await get_inventory(session, profile_id, search=search.strip())
+        return [{
+            "id": r.id,
+            "name": r.name,
+            "quantity": r.quantity,
+            "unit_name": r.unit_name,
+            "low_threshold": r.low_threshold,
+            "has_photo": bool(r.photo_data),
+            "photo_url": f"/api/inventory/{r.id}/photo" if r.photo_data else "",
+        } for r in rows]
+
+
+@app.post("/api/inventory")
+async def api_inventory_add(payload: InventoryPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        med = (await session.execute(select(Medicine).where(Medicine.name == name))).scalar_one_or_none()
+        item = InventoryItem(profile_id=profile_id, medicine_id=med.id if med else None, name=name, quantity=max(0, payload.quantity), unit_name=payload.unit_name or "шт", low_threshold=max(0, payload.low_threshold), active=True)
+        session.add(item)
+        await session.flush()
+        await log_action(session, profile_id, tg_id, "inventory_created", "inventory", item.id, f"Добавлено в аптечку: {item.name}", commit=True)
+        return {"ok": True, "id": item.id}
+
+
+@app.put("/api/inventory/{item_id}")
+async def api_inventory_update(item_id: int, payload: InventoryPayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        item = (await session.execute(select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.profile_id == profile_id, InventoryItem.active == True))).scalar_one_or_none()
+        if not item:
+            raise HTTPException(status_code=404, detail="Inventory item not found")
+        med = (await session.execute(select(Medicine).where(Medicine.name == payload.name.strip()))).scalar_one_or_none() if payload.name.strip() else None
+        item.name = payload.name.strip() or item.name
+        item.medicine_id = med.id if med else item.medicine_id
+        item.quantity = max(0, payload.quantity)
+        item.unit_name = payload.unit_name or "шт"
+        item.low_threshold = max(0, payload.low_threshold)
+        # если пополнили выше порога, разрешаем новое напоминание в будущем
+        if item.quantity > item.low_threshold:
+            item.purchase_alert_sent_at = None
+        await log_action(session, profile_id, tg_id, "inventory_updated", "inventory", item.id, f"Обновлена аптечка: {item.name}", commit=True)
+        return {"ok": True}
+
+
+@app.delete("/api/inventory/{item_id}")
+async def api_inventory_delete(item_id: int, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        item = (await session.execute(select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.profile_id == profile_id, InventoryItem.active == True))).scalar_one_or_none()
+        if not item:
+            raise HTTPException(status_code=404, detail="Inventory item not found")
+        item.active = False
+        await log_action(session, profile_id, tg_id, "inventory_deleted", "inventory", item.id, f"Удалено из аптечки: {item.name}", commit=True)
+        return {"ok": True}
+
+
+@app.post("/api/inventory/{item_id}/photo")
+async def api_inventory_photo_upload(item_id: int, request: Request, file: UploadFile = File(...)):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        item = (await session.execute(select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.profile_id == profile_id, InventoryItem.active == True))).scalar_one_or_none()
+        if not item:
+            raise HTTPException(status_code=404, detail="Inventory item not found")
+        data = await file.read()
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File is too large; max 8 MB")
+        item.photo_filename = file.filename or "medicine-photo"
+        item.photo_content_type = file.content_type or "application/octet-stream"
+        item.photo_data = data
+        await log_action(session, profile_id, tg_id, "inventory_photo_added", "inventory", item.id, f"Добавлено фото лекарства: {item.name}", commit=True)
+        return {"ok": True}
+
+
+@app.get("/api/inventory/{item_id}/photo")
+async def api_inventory_photo(item_id: int):
+    # Фото используется внутри <img>, где нельзя передать Telegram initData header.
+    # Поэтому endpoint отдает только активное фото по id без списка/метаданных.
+    async with SessionLocal() as session:
+        item = (await session.execute(select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.active == True))).scalar_one_or_none()
+        if not item or not item.photo_data:
+            raise HTTPException(status_code=404, detail="Photo not found")
+        return Response(content=item.photo_data, media_type=item.photo_content_type or "application/octet-stream")
+
+
+async def _report_rows(session, profile_id: int, days: int = 30):
+    profile = (await session.execute(select(Profile).where(Profile.id == profile_id))).scalar_one_or_none()
+    stats = await get_stats(session, days=days, profile_id=profile_id)
+    start = datetime.now(TZ) - timedelta(days=days)
+    events = list((await session.execute(
+        select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
+            Schedule.profile_id == profile_id,
+            DoseEvent.due_at >= start,
+            DoseEvent.due_at <= datetime.now(TZ),
+        ).order_by(DoseEvent.due_at.desc())
+    )).scalars().all())
+    return profile, stats, events
+
+
+@app.get("/api/reports/doctor.xlsx")
+async def api_report_xlsx(request: Request, days: int = 30):
+    from openpyxl import Workbook
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        profile, stats, events = await _report_rows(session, profile_id, max(1, min(days, 365)))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Статистика"
+    ws.append(["Профиль", profile.name if profile else ""])
+    ws.append(["Период, дней", days])
+    ws.append([])
+    ws.append(["Препарат", "Всего", "Принято", "Пропущено", "Не отмечено", "% принято"])
+    for r in stats:
+        ws.append([r["medicine"], r["total"], r["taken"], r["skipped"], r["pending"], r["taken_percent"]])
+    ws2 = wb.create_sheet("История")
+    ws2.append(["Дата", "План", "Препарат", "Доза", "Статус", "Факт"])
+    for e in events:
+        ws2.append([e.due_at.astimezone(TZ).strftime("%d.%m.%Y"), e.due_at.astimezone(TZ).strftime("%H:%M"), e.schedule.medicine.name, e.schedule.dose, e.status, e.taken_at.astimezone(TZ).strftime("%H:%M") if e.taken_at else ""])
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return StreamingResponse(bio, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=doctor_report.xlsx"})
+
+
+@app.get("/api/reports/doctor.pdf")
+async def api_report_pdf(request: Request, days: int = 30):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    import os
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        profile, stats, events = await _report_rows(session, profile_id, max(1, min(days, 365)))
+    bio = BytesIO()
+    c = canvas.Canvas(bio, pagesize=A4)
+    font = "Helvetica"
+    for fp in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/local/share/fonts/DejaVuSans.ttf"]:
+        if os.path.exists(fp):
+            pdfmetrics.registerFont(TTFont("DejaVuSans", fp)); font = "DejaVuSans"; break
+    width, height = A4
+    y = height - 42
+    def line(txt, size=10, dy=16):
+        nonlocal y
+        if y < 60:
+            c.showPage(); y = height - 42; c.setFont(font, size)
+        c.setFont(font, size); c.drawString(36, y, str(txt)[:110]); y -= dy
+    line("Отчет для врача", 16, 24)
+    line(f"Профиль: {profile.name if profile else ''}")
+    line(f"Период: {days} дней")
+    y -= 8
+    line("Статистика", 13, 20)
+    for r in stats:
+        line(f"{r['medicine']}: принято {r['taken']}/{r['total']} ({r['taken_percent']}%), пропущено {r['skipped']}, не отмечено {r['pending']}")
+    y -= 8
+    line("Последние события", 13, 20)
+    for e in events[:80]:
+        fact = f", факт {e.taken_at.astimezone(TZ).strftime('%H:%M')}" if e.taken_at else ""
+        line(f"{e.due_at.astimezone(TZ).strftime('%d.%m %H:%M')} — {e.schedule.medicine.name} {e.schedule.dose} — {e.status}{fact}", 9, 14)
+    c.save()
+    bio.seek(0)
+    return StreamingResponse(bio, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=doctor_report.pdf"})
 
 
 @app.get("/api/stats", response_class=ORJSONResponse)

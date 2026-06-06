@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride
+from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride, InventoryItem
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
@@ -555,6 +555,7 @@ async def mark_group_taken(
         event.skipped_by = None
         event.postponed_until = None
         event.note = f"Групповая отметка пользователем {tg_id}"
+        await adjust_inventory_for_event(session, event, -1)
     await session.commit()
     return events
 
@@ -624,6 +625,7 @@ async def mark_taken(
     event.taken_by = tg_id
     event.postponed_until = None
     event.note = note
+    await adjust_inventory_for_event(session, event, -1)
     await session.commit()
     return event
 
@@ -695,6 +697,7 @@ async def set_event_status(
         event.skipped_by = None
         event.postponed_until = None
         event.note = f"Статус изменен пользователем {tg_id}"
+        await adjust_inventory_for_event(session, event, -1)
     elif status == "skipped":
         event.status = "skipped"
         event.skipped_at = datetime.now(TZ)
@@ -790,6 +793,104 @@ def format_today(events: list[DoseEvent]) -> str:
             extra = f" — отложено до {e.postponed_until.astimezone(TZ).strftime('%H:%M')}"
         lines.append(f"{status_icon(e)} {e.due_at.astimezone(TZ).strftime('%H:%M')} — {event_title(e)}{extra}")
     return "\n".join(lines)
+
+
+async def adjust_inventory_for_event(session: AsyncSession, event: DoseEvent, delta: int = -1) -> None:
+    """Adjust stock by 1 unit for a taken dose when inventory item exists."""
+    if not event or not event.schedule or not event.schedule.medicine:
+        return
+    med = event.schedule.medicine
+    item = (await session.execute(select(InventoryItem).where(
+        InventoryItem.profile_id == event.schedule.profile_id,
+        InventoryItem.active == True,
+        or_(InventoryItem.medicine_id == med.id, InventoryItem.name == med.name),
+    ).order_by(InventoryItem.medicine_id.desc(), InventoryItem.id))).scalars().first()
+    if item:
+        item.quantity = max(0, int(item.quantity or 0) + int(delta))
+
+
+async def get_overdue_for_parent_alert(session: AsyncSession) -> list[DoseEvent]:
+    now = datetime.now(TZ)
+    cutoff = now - timedelta(minutes=settings.overdue_alert_minutes)
+    q = select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
+        Schedule.active == True,
+        DoseEvent.status == "pending",
+        DoseEvent.due_at <= cutoff,
+        or_(DoseEvent.postponed_until.is_(None), DoseEvent.postponed_until <= now),
+        DoseEvent.overdue_alert_sent_at.is_(None),
+    ).order_by(DoseEvent.due_at).limit(50)
+    return list((await session.execute(q)).scalars().all())
+
+
+def overdue_alert_text(events: list[DoseEvent]) -> str:
+    if not events:
+        return ""
+    due = events[0].due_at.astimezone(TZ).strftime("%H:%M")
+    if len(events) == 1:
+        return f"⚠️ Прием просрочен больше чем на {settings.overdue_alert_minutes} мин:\n{event_title(events[0])}\nПлан: {due}"
+    lines = [f"⚠️ Группа приемов на {due} просрочена больше чем на {settings.overdue_alert_minutes} мин:"]
+    lines += [f"• {event_title(e)}" for e in events]
+    return "\n".join(lines)
+
+
+def skipped_notification_text(events: list[DoseEvent]) -> str:
+    if not events:
+        return ""
+    due = events[0].due_at.astimezone(TZ).strftime("%H:%M")
+    if len(events) == 1:
+        return f"⏭️ Прием отмечен как пропущенный:\n{event_title(events[0])}\nПлан: {due}"
+    return "\n".join([f"⏭️ Группа приемов на {due} отмечена как пропущенная:"] + [f"• {event_title(e)}" for e in events])
+
+
+async def get_evening_summary(session: AsyncSession, profile_id: int, day: date | None = None) -> dict:
+    day = day or datetime.now(TZ).date()
+    start = datetime.combine(day, time.min, tzinfo=TZ)
+    end = start + timedelta(days=1)
+    rows = list((await session.execute(
+        select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
+            Schedule.profile_id == profile_id,
+            DoseEvent.due_at >= start,
+            DoseEvent.due_at < end,
+        ).order_by(DoseEvent.due_at, DoseEvent.id)
+    )).scalars().all())
+    return {
+        "date": day,
+        "events": rows,
+        "total": len(rows),
+        "taken": sum(1 for e in rows if e.status == "taken"),
+        "skipped": sum(1 for e in rows if e.status == "skipped"),
+        "pending": sum(1 for e in rows if e.status == "pending"),
+    }
+
+
+def evening_summary_text(profile: Profile, summary: dict) -> str:
+    rows = summary["events"]
+    date_s = summary["date"].strftime("%d.%m.%Y")
+    lines = [f"🌙 Итог дня · {profile.name} · {date_s}", f"✅ Принято: {summary['taken']}  ⏭️ Пропущено: {summary['skipped']}  ⏳ Не отмечено: {summary['pending']}  Всего: {summary['total']}"]
+    if rows:
+        missed = [e for e in rows if e.status != "taken"]
+        if missed:
+            lines.append("\nЧто осталось не принято/пропущено:")
+            for e in missed[:10]:
+                lines.append(f"• {e.due_at.astimezone(TZ).strftime('%H:%M')} — {event_title(e)} — {'пропущено' if e.status=='skipped' else 'не отмечено'}")
+    return "\n".join(lines)
+
+
+async def get_inventory(session: AsyncSession, profile_id: int, search: str = "") -> list[InventoryItem]:
+    q = select(InventoryItem).where(InventoryItem.profile_id == profile_id, InventoryItem.active == True).order_by(InventoryItem.name)
+    if search:
+        q = q.where(InventoryItem.name.ilike(f"%{search}%"))
+    return list((await session.execute(q)).scalars().all())
+
+
+async def low_stock_items(session: AsyncSession) -> list[InventoryItem]:
+    today_start = datetime.combine(datetime.now(TZ).date(), time.min, tzinfo=TZ)
+    q = select(InventoryItem).where(
+        InventoryItem.active == True,
+        InventoryItem.quantity <= InventoryItem.low_threshold,
+        or_(InventoryItem.purchase_alert_sent_at.is_(None), InventoryItem.purchase_alert_sent_at < today_start),
+    ).order_by(InventoryItem.profile_id, InventoryItem.name)
+    return list((await session.execute(q)).scalars().all())
 
 
 async def get_history_for_medicine(session: AsyncSession, medicine_id: int, days: int = 30, profile_id: int | None = None) -> list[DoseEvent]:
