@@ -121,10 +121,7 @@
   async function editTakenTime(id,current,planned){const value=prompt('Фактическое время приема', current || planned || new Date().toTimeString().slice(0,5));if(value===null)return;if(!/^\d{2}:\d{2}$/.test(value)){toast('Введите время в формате HH:MM');return}const data=await api(`/api/events/${id}/taken-time`,{method:'PATCH',body:JSON.stringify({actual_time:value})});toast(data.message||'Время обновлено');await loadToday()}
 
   async function changeStatus(id,current,currentTime,planned){
-    const choice=prompt('Новый статус:
-1 — Не принято
-2 — Принято
-3 — Пропущено', current==='taken'?'2':current==='skipped'?'3':'1');
+    const choice=prompt(`Новый статус:\n1 — Не принято\n2 — Принято\n3 — Пропущено`, current==='taken'?'2':current==='skipped'?'3':'1');
     if(choice===null)return;
     let status=null, actual_time=null;
     const v=choice.trim().toLowerCase();
