@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Семейная аптечка</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --text:#17212b; --muted:#6b7280; --accent:#2ea6ff; --ok:#1f9d55; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:760px; margin:0 auto; padding:16px; }
+    h1 { font-size:24px; margin:8px 0 4px; }
+    .sub { color:var(--muted); margin-bottom:16px; }
+    .card { background:var(--card); border-radius:18px; padding:14px; box-shadow:0 8px 28px rgba(20,25,40,.08); margin:12px 0; }
+    .dose { display:flex; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid #edf0f5; padding:12px 0; }
+    .dose:last-child { border-bottom:0; }
+    .time { font-weight:700; min-width:54px; }
+    .title { flex:1; line-height:1.25; }
+    .status { font-size:13px; color:var(--muted); margin-top:4px; }
+    button { border:0; border-radius:12px; padding:10px 12px; font-weight:700; background:var(--accent); color:white; cursor:pointer; }
+    button.done { background:var(--ok); }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    input { width:100%; box-sizing:border-box; padding:12px; border:1px solid #dce2ea; border-radius:12px; margin:6px 0 10px; font-size:16px; }
+    label { font-size:13px; color:var(--muted); }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .toast { position:fixed; left:16px; right:16px; bottom:16px; background:#17212b; color:white; border-radius:14px; padding:12px; display:none; }
+    .pill { display:inline-block; background:#eef7ff; color:#14639b; border-radius:999px; padding:4px 8px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>💊 Семейная аптечка</h1>
+    <div class="sub">Отмечаем приемы, не спорим с будильником и радуем родителей.</div>
+
+    <div class="card">
+      <span class="pill">Сегодня</span>
+      <div id="today">Загрузка...</div>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:18px;margin:0 0 10px">Добавить прием</h2>
+      <label>Лекарство</label>
+      <input id="name" placeholder="Например, Аквадетрим" />
+      <label>Доза</label>
+      <input id="dose" placeholder="Например, 2 капли" />
+      <div class="row">
+        <div><label>Время</label><input id="time" type="time" value="09:00" /></div>
+        <div><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div>
+      </div>
+      <button onclick="addSchedule()">Добавить</button>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  const initData = tg?.initData || "";
+
+  function toast(text) {
+    const el = document.getElementById('toast');
+    el.textContent = text;
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 3500);
+  }
+
+  async function api(path, options={}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData, ...(options.headers || {}) }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }
+
+  async function loadToday() {
+    const root = document.getElementById('today');
+    const rows = await api('/api/today');
+    if (!rows.length) { root.textContent = 'Сегодня приемов нет'; return; }
+    root.innerHTML = rows.map(r => `
+      <div class="dose">
+        <div class="time">${r.time}</div>
+        <div class="title">${r.title}<div class="status">${r.status === 'taken' ? '✅ принято ' + (r.taken_at || '') : '⏳ ждет отметки'}</div></div>
+        <button class="${r.status === 'taken' ? 'done' : ''}" ${r.status === 'taken' ? 'disabled' : ''} onclick="take(${r.id})">${r.status === 'taken' ? 'Готово' : 'Выпил'}</button>
+      </div>`).join('');
+  }
+
+  async function take(id) {
+    const data = await api(`/api/events/${id}/take`, { method:'POST' });
+    toast(data.message || 'Отмечено');
+    loadToday();
+    if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+  }
+
+  async function addSchedule() {
+    const payload = {
+      name: document.getElementById('name').value.trim(),
+      dose: document.getElementById('dose').value.trim(),
+      time_local: document.getElementById('time').value,
+      label: document.getElementById('label').value.trim()
+    };
+    if (!payload.name || !payload.dose || !payload.time_local) { toast('Заполните лекарство, дозу и время'); return; }
+    await api('/api/schedules', { method:'POST', body: JSON.stringify(payload) });
+    toast('Прием добавлен');
+    document.getElementById('name').value=''; document.getElementById('dose').value=''; document.getElementById('label').value='';
+    loadToday();
+  }
+
+  loadToday().catch(e => toast('Ошибка: ' + e.message));
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+aiogram==3.7.0
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+SQLAlchemy==2.0.31
+asyncpg==0.29.0
+aiosqlite==0.20.0
+python-dotenv==1.0.1
+APScheduler==3.10.4
+pydantic-settings==2.3.4
+orjson==3.10.6
