@@ -6,48 +6,95 @@
   <title>Семейная аптечка</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --text:#17212b; --muted:#6b7280; --accent:#2ea6ff; --ok:#1f9d55; }
+    :root { --bg:#f6f7fb; --card:#fff; --text:#17212b; --muted:#6b7280; --accent:#2ea6ff; --ok:#1f9d55; --warn:#e79016; --danger:#d64545; }
     body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
-    .wrap { max-width:760px; margin:0 auto; padding:16px; }
+    .wrap { max-width:860px; margin:0 auto; padding:16px; }
     h1 { font-size:24px; margin:8px 0 4px; }
+    h2 { font-size:18px; margin:0 0 10px; }
     .sub { color:var(--muted); margin-bottom:16px; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+    .tab { background:#e9eef7; color:#17212b; }
+    .tab.active { background:var(--accent); color:white; }
     .card { background:var(--card); border-radius:18px; padding:14px; box-shadow:0 8px 28px rgba(20,25,40,.08); margin:12px 0; }
-    .dose { display:flex; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid #edf0f5; padding:12px 0; }
+    .dose { display:grid; grid-template-columns:58px 1fr; gap:10px; border-bottom:1px solid #edf0f5; padding:12px 0; }
     .dose:last-child { border-bottom:0; }
-    .time { font-weight:700; min-width:54px; }
-    .title { flex:1; line-height:1.25; }
+    .time { font-weight:800; }
+    .title { line-height:1.25; }
     .status { font-size:13px; color:var(--muted); margin-top:4px; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
     button { border:0; border-radius:12px; padding:10px 12px; font-weight:700; background:var(--accent); color:white; cursor:pointer; }
-    button.done { background:var(--ok); }
+    button.ok { background:var(--ok); }
+    button.warn { background:var(--warn); }
+    button.danger { background:var(--danger); }
+    button.gray { background:#758195; }
     button:disabled { opacity:.55; cursor:not-allowed; }
-    input { width:100%; box-sizing:border-box; padding:12px; border:1px solid #dce2ea; border-radius:12px; margin:6px 0 10px; font-size:16px; }
+    input, select { width:100%; box-sizing:border-box; padding:12px; border:1px solid #dce2ea; border-radius:12px; margin:6px 0 10px; font-size:16px; }
     label { font-size:13px; color:var(--muted); }
     .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    .toast { position:fixed; left:16px; right:16px; bottom:16px; background:#17212b; color:white; border-radius:14px; padding:12px; display:none; }
+    .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+    .toast { position:fixed; left:16px; right:16px; bottom:16px; background:#17212b; color:white; border-radius:14px; padding:12px; display:none; z-index:10; }
     .pill { display:inline-block; background:#eef7ff; color:#14639b; border-radius:999px; padding:4px 8px; font-size:12px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:left; padding:8px; border-bottom:1px solid #edf0f5; font-size:14px; vertical-align:top; }
+    .hidden { display:none; }
+    .deny { background:#fff0f0; color:#7f1d1d; border:1px solid #ffd0d0; }
+    @media (max-width:650px) { .row,.row3 { grid-template-columns:1fr; } .dose { grid-template-columns:48px 1fr; } }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>💊 Семейная аптечка</h1>
-    <div class="sub">Отмечаем приемы, не спорим с будильником и радуем родителей.</div>
+    <div class="sub">Приемы, отметки, пропуски, отложенные будильники и спокойные родители.</div>
 
-    <div class="card">
-      <span class="pill">Сегодня</span>
-      <div id="today">Загрузка...</div>
-    </div>
+    <div id="access" class="card hidden"></div>
 
-    <div class="card">
-      <h2 style="font-size:18px;margin:0 0 10px">Добавить прием</h2>
-      <label>Лекарство</label>
-      <input id="name" placeholder="Например, Аквадетрим" />
-      <label>Доза</label>
-      <input id="dose" placeholder="Например, 2 капли" />
-      <div class="row">
-        <div><label>Время</label><input id="time" type="time" value="09:00" /></div>
-        <div><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div>
+    <div id="main" class="hidden">
+      <div class="tabs">
+        <button id="tabToday" class="tab active" onclick="showTab('today')">Сегодня</button>
+        <button id="tabStats" class="tab" onclick="showTab('stats')">Статистика</button>
+        <button id="tabHistory" class="tab" onclick="showTab('history')">История</button>
+        <button id="tabAdmin" class="tab hidden" onclick="showTab('admin')">⚙️ Администрирование</button>
       </div>
-      <button onclick="addSchedule()">Добавить</button>
+
+      <section id="pageToday" class="card">
+        <span class="pill">Сегодня</span>
+        <div id="today">Загрузка...</div>
+      </section>
+
+      <section id="pageStats" class="card hidden">
+        <h2>📊 Статистика за 30 дней</h2>
+        <div id="stats">Загрузка...</div>
+      </section>
+
+      <section id="pageHistory" class="card hidden">
+        <h2>🧾 История по препарату</h2>
+        <label>Препарат</label>
+        <select id="medicineSelect" onchange="loadHistory()"></select>
+        <div id="history">Выберите препарат</div>
+      </section>
+
+      <section id="pageAdmin" class="hidden">
+        <div class="card">
+          <h2>Добавить прием</h2>
+          <label>Лекарство</label>
+          <input id="name" placeholder="Например, Аквадетрим" />
+          <label>Доза</label>
+          <input id="dose" placeholder="Например, 2 капли" />
+          <div class="row">
+            <div><label>Время</label><input id="time" type="time" value="09:00" /></div>
+            <div><label>Комментарий</label><input id="label" placeholder="после завтрака" /></div>
+          </div>
+          <div class="row">
+            <div><label>Дата начала</label><input id="startDate" type="date" /></div>
+            <div><label>Дата окончания</label><input id="endDate" type="date" /></div>
+          </div>
+          <button onclick="addSchedule()">Добавить</button>
+        </div>
+        <div class="card">
+          <h2>Текущее расписание</h2>
+          <div id="schedules">Загрузка...</div>
+        </div>
+      </section>
     </div>
   </div>
   <div class="toast" id="toast"></div>
@@ -56,6 +103,7 @@
   const tg = window.Telegram?.WebApp;
   if (tg) { tg.ready(); tg.expand(); }
   const initData = tg?.initData || "";
+  let me = null;
 
   function toast(text) {
     const el = document.getElementById('toast');
@@ -70,7 +118,27 @@
       headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData, ...(options.headers || {}) }
     });
     if (!res.ok) throw new Error(await res.text());
-    return await res.json();
+    const txt = await res.text();
+    return txt ? JSON.parse(txt) : {};
+  }
+
+  function showTab(name) {
+    ['today','stats','history','admin'].forEach(t => {
+      document.getElementById('page' + t[0].toUpperCase() + t.slice(1))?.classList.add('hidden');
+      document.getElementById('tab' + t[0].toUpperCase() + t.slice(1))?.classList.remove('active');
+    });
+    document.getElementById('page' + name[0].toUpperCase() + name.slice(1)).classList.remove('hidden');
+    document.getElementById('tab' + name[0].toUpperCase() + name.slice(1)).classList.add('active');
+    if (name === 'stats') loadStats();
+    if (name === 'history') loadMedicines();
+    if (name === 'admin') loadSchedules();
+  }
+
+  function statusText(r) {
+    if (r.status === 'taken') return '✅ принято ' + (r.taken_at || '');
+    if (r.status === 'skipped') return '⏭️ пропущено ' + (r.skipped_at || '');
+    if (r.postponed_until) return '😴 отложено до ' + r.postponed_until;
+    return '⏳ ждет отметки';
   }
 
   async function loadToday() {
@@ -80,33 +148,117 @@
     root.innerHTML = rows.map(r => `
       <div class="dose">
         <div class="time">${r.time}</div>
-        <div class="title">${r.title}<div class="status">${r.status === 'taken' ? '✅ принято ' + (r.taken_at || '') : '⏳ ждет отметки'}</div></div>
-        <button class="${r.status === 'taken' ? 'done' : ''}" ${r.status === 'taken' ? 'disabled' : ''} onclick="take(${r.id})">${r.status === 'taken' ? 'Готово' : 'Выпил'}</button>
+        <div class="title">
+          <b>${r.title}</b>
+          <div class="status">${statusText(r)}</div>
+          <div class="actions">
+            <input id="actual_${r.id}" type="time" value="${r.taken_at || new Date().toTimeString().slice(0,5)}" ${r.status !== 'pending' ? 'disabled' : ''} style="max-width:130px;margin:0" />
+            <button class="ok" ${r.status !== 'pending' ? 'disabled' : ''} onclick="take(${r.id})">Выпил</button>
+            <button class="warn" ${r.status !== 'pending' ? 'disabled' : ''} onclick="snooze(${r.id})">Отложить 30 мин</button>
+            <button class="danger" ${r.status !== 'pending' ? 'disabled' : ''} onclick="skip(${r.id})">Пропущено</button>
+          </div>
+        </div>
       </div>`).join('');
   }
 
   async function take(id) {
-    const data = await api(`/api/events/${id}/take`, { method:'POST' });
+    const actual = document.getElementById('actual_' + id)?.value || null;
+    const data = await api(`/api/events/${id}/take`, { method:'POST', body: JSON.stringify({ actual_time: actual }) });
     toast(data.message || 'Отмечено');
     loadToday();
     if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
   }
 
+  async function skip(id) {
+    await api(`/api/events/${id}/skip`, { method:'POST', body: JSON.stringify({}) });
+    toast('Пропуск сохранен');
+    loadToday();
+  }
+
+  async function snooze(id) {
+    const data = await api(`/api/events/${id}/snooze`, { method:'POST', body: JSON.stringify({}) });
+    toast(data.message || 'Отложено');
+    loadToday();
+  }
+
   async function addSchedule() {
+    if (!me?.is_parent) { toast('Доступно только родителям'); return; }
     const payload = {
       name: document.getElementById('name').value.trim(),
       dose: document.getElementById('dose').value.trim(),
       time_local: document.getElementById('time').value,
-      label: document.getElementById('label').value.trim()
+      label: document.getElementById('label').value.trim(),
+      start_date: document.getElementById('startDate').value || null,
+      end_date: document.getElementById('endDate').value || null,
     };
     if (!payload.name || !payload.dose || !payload.time_local) { toast('Заполните лекарство, дозу и время'); return; }
     await api('/api/schedules', { method:'POST', body: JSON.stringify(payload) });
     toast('Прием добавлен');
-    document.getElementById('name').value=''; document.getElementById('dose').value=''; document.getElementById('label').value='';
-    loadToday();
+    ['name','dose','label','startDate','endDate'].forEach(id => document.getElementById(id).value='');
+    loadSchedules(); loadToday();
   }
 
-  loadToday().catch(e => toast('Ошибка: ' + e.message));
+  async function loadSchedules() {
+    if (!me?.is_parent) return;
+    const root = document.getElementById('schedules');
+    const rows = await api('/api/schedules');
+    if (!rows.length) { root.textContent = 'Расписание пустое'; return; }
+    root.innerHTML = `<table><tr><th>Время</th><th>Препарат</th><th>Курс</th><th></th></tr>${rows.map(r => `
+      <tr>
+        <td>${r.time_local}</td>
+        <td><b>${r.name}</b><br>${r.dose}<br><span class="status">${r.label}</span></td>
+        <td>${r.start_date || '—'}<br>${r.end_date || 'бессрочно'}</td>
+        <td><button class="gray" onclick="deleteSchedule(${r.id})">Отключить</button></td>
+      </tr>`).join('')}</table>`;
+  }
+
+  async function deleteSchedule(id) {
+    await api('/api/schedules/' + id, { method:'DELETE' });
+    toast('Прием отключен');
+    loadSchedules(); loadToday();
+  }
+
+  async function loadStats() {
+    const rows = await api('/api/stats');
+    const root = document.getElementById('stats');
+    if (!rows.length) { root.textContent = 'Статистики пока нет'; return; }
+    root.innerHTML = `<table><tr><th>Препарат</th><th>Принято</th><th>Пропущено</th><th>Ожидает</th><th>%</th></tr>${rows.map(r => `
+      <tr><td>${r.medicine}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table>`;
+  }
+
+  async function loadMedicines() {
+    const select = document.getElementById('medicineSelect');
+    if (select.dataset.loaded) return;
+    const meds = await api('/api/medicines');
+    select.innerHTML = meds.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+    select.dataset.loaded = '1';
+    if (meds.length) loadHistory();
+  }
+
+  async function loadHistory() {
+    const id = document.getElementById('medicineSelect').value;
+    const root = document.getElementById('history');
+    if (!id) { root.textContent = 'Выберите препарат'; return; }
+    const rows = await api(`/api/medicines/${id}/history`);
+    if (!rows.length) { root.textContent = 'Истории пока нет'; return; }
+    root.innerHTML = `<table><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r => `
+      <tr><td>${r.date}</td><td>${r.due_time}<br>${r.title}</td><td>${r.status === 'taken' ? '✅ ' + (r.taken_at || '') : r.status === 'skipped' ? '⏭️' : '⏳'}</td></tr>`).join('')}</table>`;
+  }
+
+  async function init() {
+    try {
+      me = await api('/api/me');
+      document.getElementById('main').classList.remove('hidden');
+      if (me.is_parent) document.getElementById('tabAdmin').classList.remove('hidden');
+      await loadToday();
+      if (location.hash === '#admin' && me.is_parent) showTab('admin');
+    } catch(e) {
+      const access = document.getElementById('access');
+      access.className = 'card deny';
+      access.textContent = 'Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.';
+    }
+  }
+  init().catch(e => toast('Ошибка: ' + e.message));
 </script>
 </body>
 </html>

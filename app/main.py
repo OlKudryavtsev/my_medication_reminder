@@ -27,7 +27,12 @@ from .service import (
     reminder_text,
     event_title,
     mark_taken,
+    mark_skipped,
+    snooze_event,
     thanks_text,
+    get_stats,
+    get_history_for_medicine,
+    parse_date_or_none,
 )
 
 settings = get_settings()
@@ -43,12 +48,34 @@ class AddSchedulePayload(BaseModel):
     dose: str
     time_local: str
     label: str = ""
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+class TakePayload(BaseModel):
+    actual_time: str | None = None
+
+
+class EventActionPayload(BaseModel):
+    note: str = ""
+
+
+def role_for_tg_id(tg_id: int | None) -> str:
+    if tg_id is None:
+        return "unknown"
+    if settings.child and tg_id == settings.child:
+        return "child"
+    if tg_id in settings.parents:
+        return "parent"
+    return "unknown"
 
 
 def validate_init_data(init_data: str) -> int | None:
-    """Return Telegram user_id when initData is valid; None for local/dev empty initData."""
+    """Return Telegram user_id when initData is valid. Empty initData is allowed only in dev mode."""
     if not init_data:
-        return None
+        if settings.allow_dev_initdata:
+            return settings.parents[0] if settings.parents else settings.child
+        raise HTTPException(status_code=401, detail="Telegram initData is required")
     pairs = dict(parse_qsl(init_data, keep_blank_values=True))
     received_hash = pairs.pop("hash", None)
     if not received_hash:
@@ -62,6 +89,21 @@ def validate_init_data(init_data: str) -> int | None:
     if not user_raw:
         return None
     return int(json.loads(user_raw)["id"])
+
+
+def require_known(request: Request) -> tuple[int, str]:
+    tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
+    role = role_for_tg_id(tg_id)
+    if role == "unknown" or tg_id is None:
+        raise HTTPException(status_code=403, detail="Access denied for unknown user")
+    return tg_id, role
+
+
+def require_parent(request: Request) -> int:
+    tg_id, role = require_known(request)
+    if role != "parent":
+        raise HTTPException(status_code=403, detail="Only parents can use administration")
+    return tg_id
 
 
 async def reminder_tick() -> None:
@@ -115,9 +157,15 @@ async def mini_app() -> FileResponse:
     return FileResponse("app/static/index.html")
 
 
+@app.get("/api/me", response_class=ORJSONResponse)
+async def api_me(request: Request):
+    tg_id, role = require_known(request)
+    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child"}
+
+
 @app.get("/api/today", response_class=ORJSONResponse)
 async def api_today(request: Request):
-    validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
+    require_known(request)
     async with SessionLocal() as session:
         await ensure_events(session)
         events = await get_today_events(session)
@@ -126,55 +174,152 @@ async def api_today(request: Request):
                 "id": e.id,
                 "time": e.due_at.astimezone(TZ).strftime("%H:%M"),
                 "title": event_title(e),
+                "medicine": e.schedule.medicine.name,
+                "dose": e.schedule.dose,
+                "label": e.schedule.label,
                 "status": e.status,
                 "taken_at": e.taken_at.astimezone(TZ).strftime("%H:%M") if e.taken_at else None,
+                "skipped_at": e.skipped_at.astimezone(TZ).strftime("%H:%M") if e.skipped_at else None,
+                "postponed_until": e.postponed_until.astimezone(TZ).strftime("%H:%M") if e.postponed_until else None,
             }
             for e in events
         ]
 
 
 @app.post("/api/events/{event_id}/take")
-async def api_take(event_id: int, request: Request):
-    tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", "")) or 0
+async def api_take(event_id: int, payload: TakePayload, request: Request):
+    tg_id, _ = require_known(request)
     async with SessionLocal() as session:
-        event = await mark_taken(session, event_id, tg_id)
+        event = await mark_taken(session, event_id, tg_id, actual_time=payload.actual_time)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     text = thanks_text()
+    actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else ""
     for parent_id in settings.parents:
-        try:
-            await bot.send_message(parent_id, f"✅ В мини-приложении отмечен прием: {event_title(event)}")
-        except Exception:
-            pass
+        if parent_id != tg_id:
+            try:
+                await bot.send_message(parent_id, f"✅ В мини-приложении отмечен прием: {event_title(event)}\nФактическое время: {actual}")
+            except Exception:
+                pass
     return {"ok": True, "message": text}
+
+
+@app.post("/api/events/{event_id}/skip")
+async def api_skip(event_id: int, payload: EventActionPayload, request: Request):
+    tg_id, _ = require_known(request)
+    async with SessionLocal() as session:
+        event = await mark_skipped(session, event_id, tg_id, note=payload.note)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    for parent_id in settings.parents:
+        if parent_id != tg_id:
+            try:
+                await bot.send_message(parent_id, f"⏭️ В мини-приложении отмечен пропуск: {event_title(event)}")
+            except Exception:
+                pass
+    return {"ok": True, "message": "Пропуск сохранен"}
+
+
+@app.post("/api/events/{event_id}/snooze")
+async def api_snooze(event_id: int, payload: EventActionPayload, request: Request):
+    tg_id, _ = require_known(request)
+    async with SessionLocal() as session:
+        event = await snooze_event(session, event_id, tg_id, settings.snooze_minutes)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    until = event.postponed_until.astimezone(TZ).strftime("%H:%M") if event.postponed_until else ""
+    return {"ok": True, "message": f"Отложено до {until}"}
 
 
 @app.get("/api/schedules", response_class=ORJSONResponse)
 async def api_schedules(request: Request):
-    validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
+    require_parent(request)
     async with SessionLocal() as session:
         rows = (await session.execute(
             select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.active == True).order_by(Schedule.time_local)  # noqa: E712
         )).scalars().all()
         return [
-            {"id": r.id, "name": r.medicine.name, "dose": r.dose, "time_local": r.time_local, "label": r.label}
+            {
+                "id": r.id,
+                "name": r.medicine.name,
+                "dose": r.dose,
+                "time_local": r.time_local,
+                "label": r.label,
+                "start_date": r.start_date.isoformat() if r.start_date else "",
+                "end_date": r.end_date.isoformat() if r.end_date else "",
+                "active": r.active,
+            }
             for r in rows
         ]
 
 
 @app.post("/api/schedules")
 async def api_add_schedule(payload: AddSchedulePayload, request: Request):
-    tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
-    if settings.parents and tg_id not in settings.parents:
-        raise HTTPException(status_code=403, detail="Only parents can add schedules")
+    require_parent(request)
+    start_date = parse_date_or_none(payload.start_date)
+    end_date = parse_date_or_none(payload.end_date)
     async with SessionLocal() as session:
         med = (await session.execute(select(Medicine).where(Medicine.name == payload.name))).scalar_one_or_none()
         if not med:
             med = Medicine(name=payload.name, default_dose=payload.dose)
             session.add(med)
             await session.flush()
-        sched = Schedule(medicine_id=med.id, dose=payload.dose, time_local=payload.time_local, label=payload.label or payload.time_local)
+        sched = Schedule(
+            medicine_id=med.id,
+            dose=payload.dose,
+            time_local=payload.time_local,
+            label=payload.label or payload.time_local,
+            start_date=start_date,
+            end_date=end_date,
+        )
         session.add(sched)
         await session.commit()
         await ensure_events(session)
         return {"ok": True, "id": sched.id}
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def api_delete_schedule(schedule_id: int, request: Request):
+    require_parent(request)
+    async with SessionLocal() as session:
+        sched = (await session.execute(select(Schedule).where(Schedule.id == schedule_id))).scalar_one_or_none()
+        if not sched:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        sched.active = False
+        await session.commit()
+        return {"ok": True}
+
+
+@app.get("/api/stats", response_class=ORJSONResponse)
+async def api_stats(request: Request, medicine_id: int | None = None, days: int = 30):
+    require_known(request)
+    async with SessionLocal() as session:
+        return await get_stats(session, medicine_id=medicine_id, days=days)
+
+
+@app.get("/api/medicines", response_class=ORJSONResponse)
+async def api_medicines(request: Request):
+    require_known(request)
+    async with SessionLocal() as session:
+        meds = (await session.execute(select(Medicine).where(Medicine.active == True).order_by(Medicine.name))).scalars().all()  # noqa: E712
+        return [{"id": m.id, "name": m.name} for m in meds]
+
+
+@app.get("/api/medicines/{medicine_id}/history", response_class=ORJSONResponse)
+async def api_medicine_history(medicine_id: int, request: Request, days: int = 30):
+    require_known(request)
+    async with SessionLocal() as session:
+        events = await get_history_for_medicine(session, medicine_id, days=days)
+        return [
+            {
+                "id": e.id,
+                "date": e.due_at.astimezone(TZ).strftime("%d.%m.%Y"),
+                "due_time": e.due_at.astimezone(TZ).strftime("%H:%M"),
+                "title": event_title(e),
+                "dose": e.schedule.dose,
+                "status": e.status,
+                "taken_at": e.taken_at.astimezone(TZ).strftime("%H:%M") if e.taken_at else None,
+                "skipped_at": e.skipped_at.astimezone(TZ).strftime("%H:%M") if e.skipped_at else None,
+            }
+            for e in events
+        ]

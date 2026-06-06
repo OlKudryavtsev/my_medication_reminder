@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from datetime import date, datetime
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -14,6 +14,7 @@ def normalize_db_url(url: str) -> str:
     elif url.startswith("postgresql://"):
         url = "postgresql+asyncpg://" + url[len("postgresql://"):]
     return url
+
 
 settings = get_settings()
 engine = create_async_engine(normalize_db_url(settings.database_url), pool_pre_ping=True)
@@ -29,7 +30,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), default="")
-    role: Mapped[str] = mapped_column(String(20), default="parent")  # parent/child/unknown
+    role: Mapped[str] = mapped_column(String(20), default="unknown")  # parent/child/unknown
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -48,7 +49,9 @@ class Schedule(Base):
     medicine_id: Mapped[int] = mapped_column(ForeignKey("medicines.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(String(255), default="")
     dose: Mapped[str] = mapped_column(String(255), default="")
-    time_local: Mapped[str] = mapped_column(String(5))  # HH:MM after meal offsets are materialized here
+    time_local: Mapped[str] = mapped_column(String(5))  # HH:MM
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     medicine: Mapped[Medicine] = relationship()
 
@@ -62,12 +65,51 @@ class DoseEvent(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/taken/skipped
     taken_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     taken_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    skipped_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    postponed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminder_count: Mapped[int] = mapped_column(Integer, default=0)
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
     schedule: Mapped[Schedule] = relationship()
 
 
+async def _column_exists(conn, table: str, column: str) -> bool:
+    result = await conn.execute(text("""
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_name = :table AND column_name = :column
+    """), {"table": table, "column": column})
+    try:
+        return bool(result.scalar())
+    except Exception:
+        return False
+
+
+async def _sqlite_column_exists(conn, table: str, column: str) -> bool:
+    rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+    return any(row[1] == column for row in rows)
+
+
+async def _add_column_if_missing(conn, table: str, column: str, ddl_type: str) -> None:
+    dialect = conn.dialect.name
+    exists = await (_sqlite_column_exists(conn, table, column) if dialect == "sqlite" else _column_exists(conn, table, column))
+    if not exists:
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+
+
+async def run_light_migrations(conn) -> None:
+    dialect = conn.dialect.name
+    date_type = "DATE"
+    dt_type = "TIMESTAMP WITH TIME ZONE" if dialect != "sqlite" else "DATETIME"
+    await _add_column_if_missing(conn, "schedules", "start_date", date_type)
+    await _add_column_if_missing(conn, "schedules", "end_date", date_type)
+    await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
+    await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
+    await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await run_light_migrations(conn)
