@@ -38,7 +38,7 @@
     .pendingActions button{min-height:34px;height:34px;border-radius:11px;font-size:12px;padding:7px 8px;text-align:center;white-space:nowrap}
     .resultLine{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;min-height:32px}.doneActions{display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:center;margin-top:7px}.doneActions:not(.skipOnly) .resultPill{grid-column:1/-1}.doneActions.skipOnly{grid-template-columns:minmax(0,1fr) auto}.doneActions button{min-width:0}.resultPill{display:flex;align-items:center;gap:5px;min-width:0;border-radius:999px;background:var(--soft);border:1px solid var(--line);padding:7px 10px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.resultPill strong{color:var(--text);font-size:12px;flex:0 0 auto}.resultPill span{min-width:0;overflow:hidden;text-overflow:ellipsis}.editTimeBtn,.changeStatusBtn{min-height:30px!important;height:30px;border-radius:10px!important;font-size:12px!important;background:var(--brand)!important;color:white!important;padding:6px 9px!important;flex:0 0 auto;white-space:nowrap}.changeStatusBtn{background:var(--soft)!important;color:var(--brand)!important;border:1px solid var(--line)!important}
     button{appearance:none;border:0;border-radius:14px;padding:10px 12px;background:var(--brand);color:white;font-weight:850;font-size:14px;line-height:1;min-height:40px}button:disabled{opacity:.42}.ok{background:var(--ok)}.warn{background:var(--warn);color:#111}.danger{background:var(--danger)}.gray{background:var(--brand2);color:var(--brand)}.blue{background:var(--brand)!important;color:white!important}
-    input,select,textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px;-webkit-appearance:none;appearance:none}textarea{min-height:78px;resize:vertical;font-family:inherit}.aiBox{background:var(--brand2);border-color:rgba(47,128,237,.22)}.aiDraftList{display:grid;gap:8px}.reportDraft{font-size:14px;line-height:1.35}.reportDraft h4{margin:0 0 8px}.reportDraft ul{padding-left:18px;margin:6px 0 12px}input[type="time"],input[type="date"]{text-align:left}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+    input,select,textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px;-webkit-appearance:none;appearance:none}textarea{min-height:78px;resize:vertical;font-family:inherit}.aiBox{background:var(--brand2);border-color:rgba(47,128,237,.22)}.aiDraftList{display:grid;gap:8px}.aiAssignmentPreview{display:grid;gap:10px;margin:10px 0}.aiBlock{border:1px solid var(--line);border-radius:16px;background:var(--soft);padding:10px}.aiBlock h3{font-size:14px;margin:0 0 8px}.aiMedCard{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:9px;margin-top:7px}.aiMedTop{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start}.aiMedTop input[type="checkbox"]{width:22px;min-height:22px;height:22px;margin-top:1px}.aiMedName{font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.aiMedMeta{font-size:12px;color:var(--muted);line-height:1.35;margin-top:3px}.aiMedActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}.aiMedActions button{min-height:32px;border-radius:11px;font-size:12px;padding:8px}.aiPreviewActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.reportDraft{font-size:14px;line-height:1.35}.reportDraft h4{margin:0 0 8px}.reportDraft ul{padding-left:18px;margin:6px 0 12px}input[type="time"],input[type="date"]{text-align:left}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.wide{width:100%}
 
     .adminList{display:grid;gap:9px}.formrow{border:1px solid var(--line);border-radius:17px;padding:10px;margin:0;background:rgba(127,127,127,.03);overflow:hidden}
@@ -211,6 +211,8 @@
 
   function pageId(name){return 'page'+name[0].toUpperCase()+name.slice(1)} function tabId(name){return 'tab'+name[0].toUpperCase()+name.slice(1)}
   let currentAdminTab='assignments';
+  let assignmentAiDraft=null;
+  let assignmentAiFile=null;
   function showAdminTab(name){
     currentAdminTab=name;
     document.getElementById('adminTabAssignments')?.classList.toggle('active', name==='assignments');
@@ -435,13 +437,125 @@
     await openModal('Черновик отчета для врача', body, ()=>closeModal(true), 'Закрыть');
   }
 
+
+  function todayIso(){return new Date().toISOString().slice(0,10)}
+  function aiAssignmentName(d){return (d.assignment_name||'').trim() || (d.doctor?`Назначение: ${d.doctor}`:'Назначение врача')}
+  function aiMedicinePlainSummary(m){
+    const parts=[m.name||'—', m.dose||'—'];
+    const f=frequencyValueFromAI(m);
+    const fm={"daily:1:1":"1 раз в день","daily:1:2":"2 раза в день","daily:1:3":"3 раза в день","weekly:7:1":"1 раз в неделю","weekly:14:1":"1 раз в 2 недели","monthly:30:1":"1 раз в месяц","daily:2:1":"1 раз в 2 дня","daily:3:1":"1 раз в 3 дня"}[f]||f;
+    parts.push(fm);
+    const tpl={fixed:'фиксированное время',before_meal:'за 30 мин до еды',with_meal:'во время еды',after_meal:'после еды'}[m.timing_template||'fixed']||'';
+    if(tpl) parts.push(tpl);
+    if(Array.isArray(m.times)&&m.times.length) parts.push(m.times.join(', '));
+    if(Array.isArray(m.meals)&&m.meals.length) parts.push(m.meals.map(x=>({breakfast:'завтрак',lunch:'обед',dinner:'ужин'}[x]||x)).join(', '));
+    if(m.start_date||m.end_date) parts.push(`${m.start_date||'—'} — ${m.end_date||'—'}`);
+    return parts.filter(Boolean).join(' · ');
+  }
+  function selectedDraftMedIndexes(){return [...document.querySelectorAll('.aiDraftCheck:checked')].map(x=>Number(x.value)).filter(n=>!Number.isNaN(n));}
+  function renderAssignmentAiPreview(data){
+    assignmentAiDraft=data||{};
+    const root=document.getElementById('assignmentAiPreview');
+    if(!root)return;
+    const meds=assignmentAiDraft.medicines||[];
+    const warnings=(assignmentAiDraft.warnings||[]).map(w=>`<div class="confirmWarn">${escapeHtml(w)}</div>`).join('');
+    root.innerHTML=`<div class="aiAssignmentPreview">
+      <div class="aiBlock"><h3>1. Общие данные назначения</h3>
+        ${warnings}
+        <div class="fieldLine"><label>Название</label><input id="aiAssignName" value="${escapeAttr(aiAssignmentName(assignmentAiDraft))}"></div>
+        <div class="fieldLine"><label>Дата назначения</label><input id="aiAssignDate" type="date" value="${escapeAttr(assignmentAiDraft.assignment_date||todayIso())}"></div>
+        <div class="fieldLine"><label>Врач</label><input id="aiAssignDoctor" value="${escapeAttr(assignmentAiDraft.doctor||'')}"></div>
+        <div class="fieldLine"><label>Комментарий</label><input id="aiAssignComment" value="${escapeAttr(assignmentAiDraft.comment||'')}"></div>
+      </div>
+      <div class="aiBlock"><h3>2. Распознанные лекарства</h3>
+        ${meds.length?meds.map((m,i)=>`<div class="aiMedCard"><div class="aiMedTop"><input class="aiDraftCheck" type="checkbox" value="${i}" checked><div><div class="aiMedName">${escapeHtml(m.name||'Без названия')}</div><div class="aiMedMeta">${escapeHtml(aiMedicinePlainSummary(m))}</div>${m.comment?`<div class="aiMedMeta">${escapeHtml(m.comment)}</div>`:''}</div></div><div class="aiMedActions"><button class="gray" onclick="applyAIMedicineFromDraft(${i})">В форму</button><button onclick="addSingleDraftMedicine(${i})">Добавить</button></div></div>`).join(''):'<div class="empty">Препараты не распознаны</div>'}
+      </div>
+      <div class="aiBlock"><h3>3. Действия</h3>
+        <div class="aiPreviewActions"><button onclick="createAssignmentFromDraft(true)" ${meds.length?'':'disabled'}>Создать назначение и добавить выбранные</button><button class="gray" onclick="createAssignmentFromDraft(false)">Сохранить только назначение</button></div>
+        <button class="danger wide" style="margin-top:8px" onclick="clearAssignmentDraft()">Отмена</button>
+        <div class="muted" style="font-size:12px;margin-top:8px">Проверьте распознанные данные перед сохранением. ИИ может ошибиться в названиях, дозах, датах или привязке ко времени еды.</div>
+      </div>
+    </div>`;
+  }
+  function clearAssignmentDraft(){assignmentAiDraft=null;assignmentAiFile=null;const root=document.getElementById('assignmentAiPreview');if(root)root.innerHTML='';const f=document.getElementById('aiAssignmentFile');if(f)f.value='';}
+  async function aiRecognizeAssignment(){
+    if(!aiEnabled){toast('ИИ-помощник выключен');return}
+    const file=document.getElementById('aiAssignmentFile')?.files?.[0];
+    if(!file){toast('Выберите фото назначения');return}
+    assignmentAiFile=file;
+    const fd=new FormData();fd.append('file',file);
+    toast('Распознаю назначение...');
+    const res=await api('/api/ai/parse-prescription',{method:'POST',body:fd,headers:{}});
+    renderAssignmentAiPreview(res);
+  }
+  function applyAIMedicineFromDraft(i){
+    const m=(assignmentAiDraft?.medicines||[])[i];
+    if(!m)return;
+    showAdminTab('meds');
+    applyAIMedicine(m);
+  }
+  function buildSchedulePayloadFromAIMed(m, courseId){
+    const fval=frequencyValueFromAI(m);
+    const [recType,interval,countRaw]=fval.split(':');
+    const count=Number(countRaw)||1;
+    const timingTemplate=m.timing_template||'fixed';
+    const meals=Array.isArray(m.meals)?m.meals:[];
+    const times=Array.isArray(m.times)?m.times:[];
+    const defaultTimes=['09:00','15:00','21:00'];
+    const defaultMeals=count===3?['breakfast','lunch','dinner']:(count===2?['breakfast','dinner']:['breakfast']);
+    const entries=[];
+    for(let idx=0;idx<count;idx++){
+      let meal=meals[idx]||defaultMeals[idx]||'breakfast';
+      const offset=timingTemplate==='before_meal'?-30:(timingTemplate==='after_meal'?10:0);
+      const time=timingTemplate==='fixed'?(times[idx]||defaultTimes[idx]||'09:00'):({breakfast:'08:00',lunch:'13:30',dinner:'19:30'}[meal]||'09:00');
+      const label=(m.comment||'').trim() || (timingTemplate==='fixed'?time:templateLabel(timingTemplate,meal));
+      entries.push({time_local:time,label,timing_template:timingTemplate,meal_name:timingTemplate==='fixed'?'':meal,meal_offset_minutes:offset});
+    }
+    return {name:(m.name||'').trim(),dose:(m.dose||'').trim(),course_id:courseId,start_date:m.start_date||null,end_date:m.end_date||null,recurrence_type:recType||'daily',recurrence_interval_days:Number(interval)||1,weekdays:Array.isArray(m.weekdays)?m.weekdays.join(','):'',specific_dates:Array.isArray(m.specific_dates)?m.specific_dates.join(','):'',entries};
+  }
+  async function addAIMedicineToCourse(m, courseId){
+    const payload=buildSchedulePayloadFromAIMed(m, courseId);
+    if(!payload.name||!payload.dose||!payload.entries.length) throw new Error('Недостаточно данных по препарату');
+    return await api('/api/schedules',{method:'POST',body:JSON.stringify(payload)});
+  }
+  async function createCourseFromDraft(){
+    const p={name:document.getElementById('aiAssignName')?.value.trim()||'Назначение врача',assignment_date:document.getElementById('aiAssignDate')?.value||null,doctor:document.getElementById('aiAssignDoctor')?.value.trim()||'',comment:document.getElementById('aiAssignComment')?.value.trim()||''};
+    const created=await api('/api/courses',{method:'POST',body:JSON.stringify(p)});
+    if(assignmentAiFile) await uploadFileToCourse(created.id, assignmentAiFile);
+    return created;
+  }
+  async function createAssignmentFromDraft(withMeds){
+    if(!assignmentAiDraft){toast('Сначала распознайте назначение');return}
+    const course=await createCourseFromDraft();
+    let added=0;
+    if(withMeds){
+      const meds=assignmentAiDraft.medicines||[];
+      for(const i of selectedDraftMedIndexes()){
+        try{await addAIMedicineToCourse(meds[i], course.id);added++;}catch(e){console.warn(e)}
+      }
+    }
+    toast(withMeds?`Назначение создано, лекарств добавлено: ${added}`:'Назначение сохранено');
+    clearAssignmentDraft();
+    await loadCourses();await loadSchedules();await loadToday();await loadAudit();
+  }
+  async function addSingleDraftMedicine(i){
+    if(!assignmentAiDraft){return}
+    const m=(assignmentAiDraft.medicines||[])[i];
+    if(!m)return;
+    const course=await createCourseFromDraft();
+    await addAIMedicineToCourse(m, course.id);
+    toast('Назначение и препарат добавлены');
+    clearAssignmentDraft();
+    await loadCourses();await loadSchedules();await loadToday();await loadAudit();
+  }
+
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
     const sel=document.getElementById('courseSelect');
     if(sel) sel.innerHTML='<option value="">Без назначения</option>'+rows.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     const root=document.getElementById('coursesBox');
-    root.innerHTML=`<button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
+    root.innerHTML=`<div class="formrow aiBox"><b>Распознать назначение</b><div class="muted" style="font-size:12px;margin-top:4px">Загрузите фото назначения врача. Приложение покажет общие данные, список препаратов и действия для подтверждения.</div><div class="grid2" style="margin-top:8px"><input id="aiAssignmentFile" type="file" accept="image/*"><button class="gray" onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать назначение</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div><div id="assignmentAiPreview"></div><button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение вручную'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
   }
   async function addCourse(){const p={name:document.getElementById('courseName').value.trim(),assignment_date:document.getElementById('courseDate').value||null,doctor:document.getElementById('courseDoctor').value.trim(),comment:document.getElementById('courseComment').value.trim()}; if(!p.name){toast('Укажите название назначения');return} const created=await api('/api/courses',{method:'POST',body:JSON.stringify(p)}); const file=document.getElementById('courseFile').files[0]; if(file){await uploadFileToCourse(created.id,file)} toast('Назначение добавлено'); addAssignmentOpen=false; await loadCourses(); await loadAudit()}
   async function editCourse(id,name,assignmentDate,doctor,comment){const body=`<label>Название</label><input id="cName" value="${name}"><label>Дата назначения</label><input id="cDate" type="date" value="${assignmentDate}"><label>Врач</label><input id="cDoctor" value="${doctor}"><label>Комментарий</label><input id="cComment" value="${comment}">`; const ok=await openModal('Изменить назначение', body, ()=>closeModal({name:document.getElementById('cName').value.trim(),assignment_date:document.getElementById('cDate').value||null,doctor:document.getElementById('cDoctor').value.trim(),comment:document.getElementById('cComment').value.trim()})); if(!ok)return; await api('/api/courses/'+id,{method:'PUT',body:JSON.stringify(ok)}); toast('Назначение обновлено'); await loadCourses(); await loadAudit()}
