@@ -352,6 +352,71 @@ async def api_audit(request: Request, limit: int = 50):
         ]
 
 
+@app.get("/api/courses", response_class=ORJSONResponse)
+async def api_courses(request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        rows = await get_courses(session, profile_id)
+        return [
+            {
+                "id": c.id,
+                "name": c.name,
+                "start_date": c.start_date.isoformat() if c.start_date else "",
+                "end_date": c.end_date.isoformat() if c.end_date else "",
+                "doctor": c.doctor or "",
+                "comment": c.comment or "",
+            }
+            for c in rows
+        ]
+
+
+@app.post("/api/courses")
+async def api_create_course(payload: CoursePayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        course = await create_course(
+            session,
+            profile_id=profile_id,
+            name=payload.name,
+            start_date=parse_date_or_none(payload.start_date),
+            end_date=parse_date_or_none(payload.end_date),
+            doctor=payload.doctor,
+            comment=payload.comment,
+            actor_tg_id=tg_id,
+        )
+        return {"ok": True, "id": course.id, "name": course.name}
+
+
+@app.put("/api/courses/{course_id}")
+async def api_update_course(course_id: int, payload: CoursePayload, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        course = await update_course(
+            session,
+            profile_id=profile_id,
+            course_id=course_id,
+            name=payload.name,
+            start_date=parse_date_or_none(payload.start_date),
+            end_date=parse_date_or_none(payload.end_date),
+            doctor=payload.doctor,
+            comment=payload.comment,
+            actor_tg_id=tg_id,
+        )
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return {"ok": True, "id": course.id, "name": course.name}
+
+
+@app.delete("/api/courses/{course_id}")
+async def api_delete_course(course_id: int, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        course = await deactivate_course(session, profile_id=profile_id, course_id=course_id, actor_tg_id=tg_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return {"ok": True}
+
+
 @app.get("/api/today", response_class=ORJSONResponse)
 async def api_today(request: Request):
     async with SessionLocal() as session:
