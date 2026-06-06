@@ -36,22 +36,21 @@
     .time{font-weight:850;color:var(--brand);font-size:16px;line-height:1.2;padding-top:2px}.title{min-width:0}.med{font-weight:850;font-size:15px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta{font-size:12px;color:var(--muted);line-height:1.25;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{font-size:12px;margin-top:4px;color:var(--muted)}
     .pendingActions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px;align-items:stretch}
     .pendingActions button{min-height:34px;height:34px;border-radius:11px;font-size:12px;padding:7px 8px;text-align:center;white-space:nowrap}
-    .finalLine{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:8px 9px;border-radius:13px;background:var(--soft);border:1px solid var(--line);font-size:12px;color:var(--muted)}
-    .finalLine strong{color:var(--text);font-size:12px}.editTimeBtn{min-height:30px!important;height:30px;border-radius:10px!important;font-size:12px!important;background:var(--brand)!important;color:white!important;padding:6px 9px!important;flex:0 0 auto}
+    .resultLine{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;min-height:32px}.resultPill{display:inline-flex;align-items:center;gap:5px;min-width:0;border-radius:999px;background:var(--soft);border:1px solid var(--line);padding:7px 10px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.resultPill strong{color:var(--text);font-size:12px}.editTimeBtn{min-height:30px!important;height:30px;border-radius:10px!important;font-size:12px!important;background:var(--brand)!important;color:white!important;padding:6px 9px!important;flex:0 0 auto}
     button{appearance:none;border:0;border-radius:14px;padding:10px 12px;background:var(--brand);color:white;font-weight:850;font-size:14px;line-height:1;min-height:40px}button:disabled{opacity:.42}.ok{background:var(--ok)}.warn{background:var(--warn);color:#111}.danger{background:var(--danger)}.gray{background:var(--brand2);color:var(--brand)}.blue{background:var(--brand)!important;color:white!important}
-    input,select{width:100%;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+    input,select{width:100%;min-width:0;border:1px solid var(--line);border-radius:13px;padding:10px;background:var(--card);color:var(--text);font-size:16px;min-height:40px;-webkit-appearance:none;appearance:none}input[type="time"],input[type="date"]{text-align:left}label{display:block;font-size:10px;font-weight:850;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.04em}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.wide{width:100%}
 
-    .adminList{display:grid;gap:9px}.formrow{border:1px solid var(--line);border-radius:17px;padding:10px;margin:0;background:rgba(127,127,127,.03)}
-    .fieldLine{display:grid;grid-template-columns:86px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}.fieldLine label{margin:0;font-size:10px}.fieldLine input{width:100%}.dateLine{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px}.dateLine input{width:100%}
-    .schedTop{display:grid;grid-template-columns:40% 30% 30%;gap:7px;align-items:end}.schedComment{margin-top:7px}.schedDates{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.adminActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}.adminActions button{min-height:34px;border-radius:11px;font-size:12px;padding:8px}.formrow input{height:38px;min-height:38px;padding:8px 9px;font-size:14px;border-radius:11px}.formrow input[readonly]{background:var(--soft);color:var(--text);opacity:1}.formrow label{margin-top:0;font-size:9px}.addForm{display:grid;gap:0}.readonlyHint{font-size:11px;color:var(--muted);margin-top:6px}
+    .adminList{display:grid;gap:9px}.formrow{border:1px solid var(--line);border-radius:17px;padding:10px;margin:0;background:rgba(127,127,127,.03);overflow:hidden}
+    .fieldLine{display:grid;grid-template-columns:112px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}.fieldLine label{margin:0;font-size:9px;line-height:1.1;white-space:nowrap}.fieldLine input{width:100%;height:40px}.dateLine{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:7px}.dateLine>*{min-width:0}.dateLine input{width:100%;height:40px}
+    .schedTop{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,2.6fr);gap:7px;align-items:end}.schedComment{margin-top:7px}.schedDates{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px;margin-top:7px}.schedDates>*{min-width:0}.adminActions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}.adminActions button{min-height:34px;border-radius:11px;font-size:12px;padding:8px}.formrow input{height:38px;min-height:38px;padding:8px 9px;font-size:14px;border-radius:11px}.formrow label{margin-top:0;font-size:9px;white-space:nowrap}.addForm{display:grid;gap:0}.valueBox{min-width:0;height:38px;display:flex;align-items:center;border:1px solid var(--line);border-radius:11px;background:var(--soft);color:var(--text);padding:8px 9px;font-size:14px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.valueBox.empty{color:var(--muted)}.readonlyHint{font-size:11px;color:var(--muted);margin-top:6px}
 
     .tableWrap{width:100%;overflow-x:auto}.miniTable{width:100%;min-width:100%;border-collapse:separate;border-spacing:0 7px;table-layout:fixed}.miniTable td,.miniTable th{text-align:left;font-size:13px;padding:9px 8px;vertical-align:middle;background:rgba(127,127,127,.04);overflow-wrap:anywhere}.miniTable th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em}.miniTable td:first-child,.miniTable th:first-child{border-radius:12px 0 0 12px}.miniTable td:last-child,.miniTable th:last-child{border-radius:0 12px 12px 0}.statsTable th:nth-child(1),.statsTable td:nth-child(1){width:42%}.statsTable th:not(:first-child),.statsTable td:not(:first-child){text-align:center}.historyTable th:nth-child(1),.historyTable td:nth-child(1){width:30%}.historyTable th:nth-child(2),.historyTable td:nth-child(2){width:36%}.historyTable th:nth-child(3),.historyTable td:nth-child(3){width:34%}
 
     .bottomTabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.88);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:7px max(9px,env(safe-area-inset-left)) calc(7px + env(safe-area-inset-bottom)) max(9px,env(safe-area-inset-right));display:flex;justify-content:center;gap:6px}[data-theme="dark"] .bottomTabs{background:rgba(22,27,34,.88)}
     .tab{max-width:720px;flex:1;border-radius:15px;background:transparent;color:var(--muted);box-shadow:none;padding:7px 3px;min-height:52px;font-size:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.tab svg{width:21px;height:21px;display:block;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tab.active{background:var(--brand2);color:var(--brand)}.hidden{display:none!important}.deny{background:#fff0f0;color:#7f1d1d;border:1px solid #ffd0d0}[data-theme="dark"] .deny{background:#33191b;color:#fecaca;border-color:#7f1d1d}
     .toast{position:fixed;left:12px;right:12px;bottom:calc(82px + env(safe-area-inset-bottom));background:#111827;color:white;border-radius:16px;padding:12px 13px;text-align:center;display:none;z-index:30;font-size:14px}.empty{text-align:center;color:var(--muted);padding:22px 8px}
-    @media(max-width:420px){.wrap{padding-left:10px;padding-right:10px}.top{margin-left:-10px;margin-right:-10px;padding-left:10px;padding-right:10px}.grid2,.grid3{grid-template-columns:1fr 1fr}.dose{grid-template-columns:46px minmax(0,1fr);gap:8px}.time{font-size:15px}.med{font-size:14px}.pendingActions{grid-template-columns:1fr 1fr 1fr;gap:5px}.pendingActions button{font-size:11px;padding-left:5px;padding-right:5px}.finalLine{padding:7px 8px}.editTimeBtn{font-size:11px!important;padding-left:7px!important;padding-right:7px!important}.filters{gap:4px}.filterBtn{font-size:11px;padding-left:2px;padding-right:2px}.card{padding:11px;border-radius:19px}.schedTop{grid-template-columns:40% 30% 30%;gap:6px}.schedDates{gap:6px}.fieldLine{grid-template-columns:78px minmax(0,1fr);gap:6px}.formrow{padding:8px}.formrow input{font-size:13px;padding-left:7px;padding-right:7px}.adminActions button{font-size:11px}.miniTable td,.miniTable th{font-size:12px;padding:8px 6px}.tab{font-size:9.5px}.sub{display:none}}
+    @media(max-width:420px){.wrap{padding-left:10px;padding-right:10px}.top{margin-left:-10px;margin-right:-10px;padding-left:10px;padding-right:10px}.grid2,.grid3{grid-template-columns:1fr 1fr}.dose{grid-template-columns:46px minmax(0,1fr);gap:8px}.time{font-size:15px}.med{font-size:14px}.pendingActions{grid-template-columns:1fr 1fr 1fr;gap:5px}.pendingActions button{font-size:11px;padding-left:5px;padding-right:5px}.resultPill{padding:6px 8px}.editTimeBtn{font-size:11px!important;padding-left:7px!important;padding-right:7px!important}.filters{gap:4px}.filterBtn{font-size:11px;padding-left:2px;padding-right:2px}.card{padding:11px;border-radius:19px}.schedTop{grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,2.6fr);gap:6px}.schedDates{gap:6px}.fieldLine{grid-template-columns:106px minmax(0,1fr);gap:6px}.formrow{padding:8px}.formrow input{font-size:13px;padding-left:7px;padding-right:7px}.adminActions button{font-size:11px}.miniTable td,.miniTable th{font-size:12px;padding:8px 6px}.tab{font-size:9.5px}.sub{display:none}}
   </style>
 </head>
 <body>
@@ -105,14 +104,16 @@
     if(!rows.length){root.innerHTML='<div class="empty">По этому фильтру приемов нет</div>';return}
     root.innerHTML=rows.map(r=>{
       let controls='';
+      let statusLine = '';
       if(r.status==='pending'){
+        statusLine = `<div class="status">${statusText(r)}</div>`;
         controls=`<div class="pendingActions"><button class="ok" onclick="take(${r.id})">Выпил</button><button class="warn" onclick="snooze(${r.id})">+30 мин</button><button class="danger" onclick="skip(${r.id})">Пропустил</button></div>`;
       } else if(r.status==='taken'){
-        controls=`<div class="finalLine"><div><strong>✅ Выпито</strong> · факт ${r.taken_at||'—'}</div><button class="editTimeBtn" onclick="editTakenTime(${r.id}, '${r.taken_at||''}', '${r.time||''}')">Изменить время</button></div>`;
+        controls=`<div class="resultLine"><div class="resultPill"><strong>✅ Выпито</strong><span>факт ${r.taken_at||'—'}</span></div><button class="editTimeBtn" onclick="editTakenTime(${r.id}, '${r.taken_at||''}', '${r.time||''}')">Изменить</button></div>`;
       } else if(r.status==='skipped'){
-        controls=`<div class="finalLine"><div><strong>⏭️ Пропущено</strong>${r.skipped_at?' · '+r.skipped_at:''}</div></div>`;
+        controls=`<div class="resultLine"><div class="resultPill"><strong>⏭️ Пропущено</strong><span>${r.skipped_at||''}</span></div></div>`;
       }
-      return `<div class="dose"><div class="time">${r.time}</div><div class="title"><div class="med">${escapeHtml(r.medicine)}</div><div class="meta">${escapeHtml(r.dose)} · ${escapeHtml(r.label)}</div><div class="status">${statusText(r)}</div>${controls}</div></div>`
+      return `<div class="dose"><div class="time">${r.time}</div><div class="title"><div class="med">${escapeHtml(r.medicine)}</div><div class="meta">${escapeHtml(r.dose)} · ${escapeHtml(r.label)}</div>${statusLine}${controls}</div></div>`
     }).join('')
   }
   async function loadToday(){todayRows=await api('/api/today');renderToday()}
@@ -122,20 +123,25 @@
   async function snooze(id){const data=await api(`/api/events/${id}/snooze`,{method:'POST',body:JSON.stringify({})});toast(data.message||'Отложено');loadToday()}
   const editSchedules = new Set();
   const scheduleDrafts = new Map();
+  function fieldHtml(id, value, editable, type='text'){
+    const safe = escapeHtml(value || '');
+    if(editable) return `<input id="${id}" ${type!=='text'?`type="${type}"`:''} value="${safe}">`;
+    return `<div id="${id}" class="valueBox ${safe?'':'empty'}" data-value="${safe}">${safe || '—'}</div>`;
+  }
   function scheduleForm(r){
-    const edit=editSchedules.has(r.id); const ro=edit?'':'readonly';
+    const edit=editSchedules.has(r.id);
     return `<div class="formrow" id="sched_${r.id}">
       <div class="schedTop">
-        <div><label>Лекарство</label><input id="s_name_${r.id}" value="${escapeHtml(r.name)}" ${ro}></div>
-        <div><label>Доза</label><input id="s_dose_${r.id}" value="${escapeHtml(r.dose)}" ${ro}></div>
-        <div><label>Время</label><input id="s_time_${r.id}" type="time" value="${r.time_local}" ${ro}></div>
+        <div><label>Лекарство</label>${fieldHtml('s_name_'+r.id, r.name, edit)}</div>
+        <div><label>Доза</label>${fieldHtml('s_dose_'+r.id, r.dose, edit)}</div>
+        <div><label>Время</label>${fieldHtml('s_time_'+r.id, r.time_local, edit, 'time')}</div>
       </div>
-      <div class="schedComment"><label>Комментарий</label><input id="s_label_${r.id}" value="${escapeHtml(r.label)}" ${ro}></div>
-      <div class="schedDates"><div><label>Дата начала</label><input id="s_start_${r.id}" type="date" value="${r.start_date||''}" ${ro}></div><div><label>Дата окончания</label><input id="s_end_${r.id}" type="date" value="${r.end_date||''}" ${ro}></div></div>
+      <div class="schedComment"><label>Комментарий</label>${fieldHtml('s_label_'+r.id, r.label, edit)}</div>
+      <div class="schedDates"><div><label>Дата начала</label>${fieldHtml('s_start_'+r.id, r.start_date || '', edit, 'date')}</div><div><label>Дата окончания</label>${fieldHtml('s_end_'+r.id, r.end_date || '', edit, 'date')}</div></div>
       <div class="adminActions">${edit?`<button onclick="saveSchedule(${r.id})">Сохранить</button><button class="gray" onclick="cancelScheduleEdit(${r.id})">Отменить</button>`:`<button class="blue" onclick="enableScheduleEdit(${r.id})">Изменить</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button>`}</div>
     </div>`
   }
-  function enableScheduleEdit(id){scheduleDrafts.set(id, readSchedule(id));editSchedules.add(id);loadSchedules()}
+  function enableScheduleEdit(id){editSchedules.add(id);loadSchedules()}
   function cancelScheduleEdit(id){editSchedules.delete(id);scheduleDrafts.delete(id);loadSchedules()}
   async function loadSchedules(){if(!me?.is_parent)return;const rows=await api('/api/schedules');const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
   function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
