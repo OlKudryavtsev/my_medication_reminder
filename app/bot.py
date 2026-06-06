@@ -33,6 +33,9 @@ from .service import (
     get_stats,
     get_history_for_medicine,
     parse_date_or_none,
+    ensure_profiles,
+    resolve_profile_id,
+    profile_recipients,
 )
 
 settings = get_settings()
@@ -170,6 +173,7 @@ async def start(message: Message) -> None:
         )
         return
     async with SessionLocal() as session:
+        await ensure_profiles(session)
         await seed_default_schedule(session)
         await ensure_events(session)
     text = (
@@ -211,8 +215,10 @@ async def today(message: Message) -> None:
     if await deny_unknown_message(message):
         return
     async with SessionLocal() as session:
+        await ensure_profiles(session)
+        profile_id = await resolve_profile_id(session, message.from_user.id, role_for(message.from_user.id))
         await ensure_events(session)
-        events = await get_today_events(session)
+        events = await get_today_events(session, profile_id=profile_id)
     await message.answer(format_today(events), reply_markup=app_keyboard())
 
 
@@ -221,8 +227,10 @@ async def today_cb(callback: CallbackQuery) -> None:
     if await deny_unknown_callback(callback):
         return
     async with SessionLocal() as session:
+        await ensure_profiles(session)
+        profile_id = await resolve_profile_id(session, callback.from_user.id, role_for(callback.from_user.id))
         await ensure_events(session)
-        events = await get_today_events(session)
+        events = await get_today_events(session, profile_id=profile_id)
     # В уведомлениях у родителей callback.message может быть неудачной точкой ответа,
     # поэтому отправляем расписание напрямую тому, кто нажал кнопку.
     await bot.send_message(callback.from_user.id, format_today(events), reply_markup=app_keyboard())
@@ -246,10 +254,7 @@ async def admin_cmd(message: Message) -> None:
     await upsert_user(message)
     if await deny_unknown_message(message):
         return
-    if not is_parent(message.from_user.id):
-        await message.answer("⛔ Администрирование доступно только родителям.")
-        return
-    await message.answer("⚙️ Раздел администрирования расписания для родителей.", reply_markup=admin_keyboard())
+    await message.answer("⚙️ Раздел управления расписанием доступного профиля.", reply_markup=admin_keyboard())
 
 
 @dp.message(Command("seed_schedule"))
@@ -271,9 +276,6 @@ async def add(message: Message) -> None:
     await upsert_user(message)
     if await deny_unknown_message(message):
         return
-    if not is_parent(message.from_user.id):
-        await message.answer("Добавлять приемы могут только родители.")
-        return
     raw = message.text.replace("/add", "", 1).strip()
     parts = [p.strip() for p in raw.split("|")]
     if len(parts) < 3:
@@ -284,12 +286,14 @@ async def add(message: Message) -> None:
     start_date = parse_date_or_none(parts[4]) if len(parts) > 4 else None
     end_date = parse_date_or_none(parts[5]) if len(parts) > 5 else None
     async with SessionLocal() as session:
+        await ensure_profiles(session)
+        profile_id = await resolve_profile_id(session, message.from_user.id, role_for(message.from_user.id))
         med = (await session.execute(select(Medicine).where(Medicine.name == name))).scalar_one_or_none()
         if not med:
             med = Medicine(name=name, default_dose=dose)
             session.add(med)
             await session.flush()
-        item = Schedule(medicine_id=med.id, dose=dose, time_local=hhmm, label=label, start_date=start_date, end_date=end_date)
+        item = Schedule(profile_id=profile_id, medicine_id=med.id, dose=dose, time_local=hhmm, label=label, start_date=start_date, end_date=end_date)
         session.add(item)
         await session.commit()
         await ensure_events(session)
@@ -301,7 +305,7 @@ async def add(message: Message) -> None:
 async def take_group_ask(callback: CallbackQuery) -> None:
     if await deny_unknown_callback(callback):
         return
-    group_key = int(callback.data.split(":", 1)[1])
+    group_key = callback.data.split(":", 1)[1]
     async with SessionLocal() as session:
         events = await get_pending_group_by_key(session, group_key)
     if not events:
@@ -320,8 +324,8 @@ async def take_group_ask(callback: CallbackQuery) -> None:
 async def take_group(callback: CallbackQuery) -> None:
     if await deny_unknown_callback(callback):
         return
-    _, group_key_raw, mode = callback.data.split(":", 2)
-    group_key = int(group_key_raw)
+    payload = callback.data.split(":", 1)[1]
+    group_key, mode = payload.rsplit(":", 1)
     actual_time = None
     async with SessionLocal() as session:
         events_before = await get_pending_group_by_key(session, group_key)
@@ -340,17 +344,14 @@ async def take_group(callback: CallbackQuery) -> None:
     who = callback.from_user.full_name or str(callback.from_user.id)
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {actual}"
-    for parent_id in settings.parents:
+    async with SessionLocal() as session:
+        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+    for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
-                await bot.send_message(parent_id, notify)
+                await bot.send_message(parent_id, notify if parent_id in settings.parents else thanks)
             except Exception:
                 pass
-    if settings.child and settings.child != callback.from_user.id:
-        try:
-            await bot.send_message(settings.child, thanks)
-        except Exception:
-            pass
     await callback.answer("Группа отмечена")
 
 
@@ -358,7 +359,7 @@ async def take_group(callback: CallbackQuery) -> None:
 async def take_group_manual(callback: CallbackQuery, state: FSMContext) -> None:
     if await deny_unknown_callback(callback):
         return
-    group_key = int(callback.data.split(":", 1)[1])
+    group_key = callback.data.split(":", 1)[1]
     await state.set_state(TakeStates.waiting_group_actual_time)
     await state.update_data(group_key=group_key)
     await callback.message.answer("Введите фактическое время группового приема в формате HH:MM, например 08:17")
@@ -380,7 +381,7 @@ async def take_group_manual_time(message: Message, state: FSMContext) -> None:
         await message.answer("Нужен формат HH:MM, например 08:17")
         return
     data = await state.get_data()
-    group_key = int(data["group_key"])
+    group_key = data["group_key"]
     async with SessionLocal() as session:
         events = await mark_group_taken(session, group_key, message.from_user.id, actual_time=hhmm)
     await state.clear()
@@ -392,7 +393,9 @@ async def take_group_manual_time(message: Message, state: FSMContext) -> None:
     who = message.from_user.full_name or str(message.from_user.id)
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {hhmm}"
-    for parent_id in settings.parents:
+    async with SessionLocal() as session:
+        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+    for parent_id in recipients:
         if parent_id != message.from_user.id:
             try:
                 await bot.send_message(parent_id, notify)
@@ -404,7 +407,7 @@ async def take_group_manual_time(message: Message, state: FSMContext) -> None:
 async def skip_group(callback: CallbackQuery) -> None:
     if await deny_unknown_callback(callback):
         return
-    group_key = int(callback.data.split(":", 1)[1])
+    group_key = callback.data.split(":", 1)[1]
     async with SessionLocal() as session:
         events = await mark_group_skipped(session, group_key, callback.from_user.id)
     if not events:
@@ -415,7 +418,9 @@ async def skip_group(callback: CallbackQuery) -> None:
     who = callback.from_user.full_name or str(callback.from_user.id)
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"⏭️ {who} отметил групповой пропуск ({len(events)}):\n{meds}"
-    for parent_id in settings.parents:
+    async with SessionLocal() as session:
+        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+    for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
                 await bot.send_message(parent_id, notify)
@@ -428,7 +433,7 @@ async def skip_group(callback: CallbackQuery) -> None:
 async def snooze_group_cb(callback: CallbackQuery) -> None:
     if await deny_unknown_callback(callback):
         return
-    group_key = int(callback.data.split(":", 1)[1])
+    group_key = callback.data.split(":", 1)[1]
     async with SessionLocal() as session:
         events = await snooze_group(session, group_key, callback.from_user.id, settings.snooze_minutes)
     if not events:
@@ -480,17 +485,14 @@ async def take(callback: CallbackQuery) -> None:
     who = callback.from_user.full_name or str(callback.from_user.id)
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else datetime.now(TZ).strftime("%H:%M")
     notify = f"✅ {who} отметил прием: {event_title(event)}\nФактическое время: {actual}"
-    for parent_id in settings.parents:
+    async with SessionLocal() as session:
+        recipients = await profile_recipients(session, event.schedule.profile_id)
+    for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
-                await bot.send_message(parent_id, notify)
+                await bot.send_message(parent_id, notify if parent_id in settings.parents else thanks)
             except Exception:
                 pass
-    if settings.child and settings.child != callback.from_user.id:
-        try:
-            await bot.send_message(settings.child, thanks)
-        except Exception:
-            pass
     await callback.answer("Отмечено!")
 
 

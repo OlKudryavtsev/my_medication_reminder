@@ -31,6 +31,17 @@ class User(Base):
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), default="")
     role: Mapped[str] = mapped_column(String(20), default="unknown")  # parent/child/unknown
+    active_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Profile(Base):
+    __tablename__ = "profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(20), default="personal")  # child/personal
+    owner_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -46,6 +57,7 @@ class Medicine(Base):
 class Schedule(Base):
     __tablename__ = "schedules"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     medicine_id: Mapped[int] = mapped_column(ForeignKey("medicines.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(String(255), default="")
     dose: Mapped[str] = mapped_column(String(255), default="")
@@ -104,6 +116,8 @@ async def run_light_migrations(conn) -> None:
     dialect = conn.dialect.name
     date_type = "DATE"
     dt_type = "TIMESTAMP WITH TIME ZONE" if dialect != "sqlite" else "DATETIME"
+    await _add_column_if_missing(conn, "users", "active_profile_id", "INTEGER")
+    await _add_column_if_missing(conn, "schedules", "profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "start_date", date_type)
     await _add_column_if_missing(conn, "schedules", "end_date", date_type)
     await _add_column_if_missing(conn, "schedules", "recurrence_type", "VARCHAR(20) DEFAULT 'daily'")

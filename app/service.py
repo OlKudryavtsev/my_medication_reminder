@@ -8,11 +8,114 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent
+from .db import Medicine, Schedule, DoseEvent, Profile, User
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
 TZ = ZoneInfo(settings.timezone)
+
+
+async def ensure_profiles(session: AsyncSession) -> None:
+    """Create child profile and personal parent profiles; attach legacy schedules to child profile."""
+    child_profile = None
+    if settings.child:
+        child_profile = (await session.execute(
+            select(Profile).where(Profile.kind == "child", Profile.active == True)
+        )).scalar_one_or_none()
+        if not child_profile:
+            child_profile = Profile(name="Ребенок", kind="child", owner_tg_id=settings.child, active=True)
+            session.add(child_profile)
+            await session.flush()
+        else:
+            child_profile.owner_tg_id = settings.child
+
+    for parent_id in settings.parents:
+        parent_profile = (await session.execute(
+            select(Profile).where(Profile.kind == "personal", Profile.owner_tg_id == parent_id, Profile.active == True)
+        )).scalar_one_or_none()
+        if not parent_profile:
+            session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, active=True))
+
+    if child_profile:
+        legacy = (await session.execute(
+            select(Schedule).where(Schedule.profile_id.is_(None))
+        )).scalars().all()
+        for sched in legacy:
+            sched.profile_id = child_profile.id
+
+    users = (await session.execute(select(User))).scalars().all()
+    for user in users:
+        if user.role == "child" and child_profile:
+            user.active_profile_id = user.active_profile_id or child_profile.id
+        elif user.role == "parent":
+            personal = (await session.execute(
+                select(Profile).where(Profile.kind == "personal", Profile.owner_tg_id == user.tg_id, Profile.active == True)
+            )).scalar_one_or_none()
+            user.active_profile_id = user.active_profile_id or (child_profile.id if child_profile else (personal.id if personal else None))
+    await session.commit()
+
+
+async def get_child_profile(session: AsyncSession) -> Profile | None:
+    await ensure_profiles(session)
+    return (await session.execute(
+        select(Profile).where(Profile.kind == "child", Profile.active == True).order_by(Profile.id)
+    )).scalars().first()
+
+
+async def profiles_for_user(session: AsyncSession, tg_id: int, role: str) -> list[Profile]:
+    await ensure_profiles(session)
+    if role == "parent":
+        q = select(Profile).where(
+            Profile.active == True,
+            or_(Profile.kind == "child", Profile.owner_tg_id == tg_id),
+        ).order_by(Profile.kind, Profile.id)
+    elif role == "child":
+        q = select(Profile).where(Profile.active == True, Profile.kind == "child").order_by(Profile.id)
+    else:
+        return []
+    return list((await session.execute(q)).scalars().all())
+
+
+async def resolve_profile_id(session: AsyncSession, tg_id: int, role: str, requested_profile_id: int | None = None) -> int:
+    profiles = await profiles_for_user(session, tg_id, role)
+    if not profiles:
+        raise ValueError("No accessible profiles")
+    allowed = {p.id for p in profiles}
+    if requested_profile_id and requested_profile_id in allowed:
+        return requested_profile_id
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    if user and user.active_profile_id in allowed:
+        return int(user.active_profile_id)
+    return profiles[0].id
+
+
+async def set_active_profile(session: AsyncSession, tg_id: int, role: str, profile_id: int) -> Profile | None:
+    profiles = await profiles_for_user(session, tg_id, role)
+    allowed = {p.id for p in profiles}
+    if profile_id not in allowed:
+        return None
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    if user:
+        user.active_profile_id = profile_id
+    await session.commit()
+    return next((p for p in profiles if p.id == profile_id), None)
+
+
+async def is_profile_manager(session: AsyncSession, tg_id: int, role: str, profile_id: int) -> bool:
+    return profile_id in {p.id for p in await profiles_for_user(session, tg_id, role)}
+
+
+async def profile_recipients(session: AsyncSession, profile_id: int) -> list[int]:
+    profile = (await session.execute(select(Profile).where(Profile.id == profile_id))).scalar_one_or_none()
+    if not profile:
+        return []
+    if profile.kind == "personal" and profile.owner_tg_id:
+        return [int(profile.owner_tg_id)]
+    recipients = []
+    if settings.child:
+        recipients.append(settings.child)
+    recipients.extend(settings.parents)
+    return list(dict.fromkeys(recipients))
 
 
 SKIP_TEXTS = [
@@ -61,6 +164,7 @@ async def add_schedule(
     dose: str,
     hhmm: str,
     label: str = "",
+    profile_id: int | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     recurrence_type: str = "daily",
@@ -68,6 +172,7 @@ async def add_schedule(
 ) -> Schedule:
     med = await upsert_medicine(session, name, dose)
     item = Schedule(
+        profile_id=profile_id,
         medicine_id=med.id,
         dose=dose,
         time_local=hhmm,
@@ -83,13 +188,18 @@ async def add_schedule(
 
 
 async def seed_default_schedule(session: AsyncSession, replace: bool = False) -> None:
+    await ensure_profiles(session)
+    child_profile = await get_child_profile(session)
+    profile_id = child_profile.id if child_profile else None
     if replace:
-        for table in (DoseEvent, Schedule, Medicine):
-            rows = (await session.execute(select(table))).scalars().all()
-            for row in rows:
-                await session.delete(row)
+        rows = (await session.execute(select(Schedule).where(Schedule.profile_id == profile_id))).scalars().all()
+        for row in rows:
+            events = (await session.execute(select(DoseEvent).where(DoseEvent.schedule_id == row.id))).scalars().all()
+            for ev in events:
+                await session.delete(ev)
+            await session.delete(row)
         await session.flush()
-    elif (await session.execute(select(Schedule.id).limit(1))).first():
+    elif (await session.execute(select(Schedule.id).where(Schedule.profile_id == profile_id).limit(1))).first():
         return
 
     b = settings.default_breakfast_time
@@ -115,7 +225,7 @@ async def seed_default_schedule(session: AsyncSession, replace: bool = False) ->
         ("Феварин", "1 таблетка", "23:15", "23:15"),
     ]
     for name, dose, hhmm, label in slots:
-        await add_schedule(session, name, dose, hhmm, label, start_date=today, end_date=None)
+        await add_schedule(session, name, dose, hhmm, label, profile_id=profile_id, start_date=today, end_date=None)
 
 
 
@@ -152,7 +262,7 @@ async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
     await session.commit()
 
 
-async def get_today_events(session: AsyncSession) -> list[DoseEvent]:
+async def get_today_events(session: AsyncSession, profile_id: int | None = None) -> list[DoseEvent]:
     now = datetime.now(TZ)
     start = datetime.combine(now.date(), time.min, tzinfo=TZ)
     end = start + timedelta(days=1)
@@ -160,6 +270,8 @@ async def get_today_events(session: AsyncSession) -> list[DoseEvent]:
         Schedule.active == True,  # noqa: E712
         DoseEvent.due_at >= start, DoseEvent.due_at < end
     ).order_by(DoseEvent.due_at)
+    if profile_id is not None:
+        q = q.where(Schedule.profile_id == profile_id)
     return list((await session.execute(q)).scalars().all())
 
 
@@ -191,13 +303,22 @@ def reminder_text(event: DoseEvent) -> str:
 
 
 
-def group_key_for_due(due_at: datetime) -> int:
-    """Stable callback key for a dose time group."""
-    return int(due_at.astimezone(TZ).timestamp())
+def group_key_for_due(due_at: datetime, profile_id: int | None = None) -> str:
+    """Stable callback key for a dose time group scoped by profile."""
+    pid = int(profile_id or 0)
+    return f"{pid}:{int(due_at.astimezone(TZ).timestamp())}"
 
 
-def group_due_from_key(group_key: int) -> datetime:
-    return datetime.fromtimestamp(int(group_key), TZ)
+def parse_group_key(group_key: str | int) -> tuple[int | None, datetime]:
+    raw = str(group_key)
+    if ":" in raw:
+        pid_s, ts_s = raw.split(":", 1)
+        pid = int(pid_s) or None
+        ts = int(ts_s)
+    else:
+        pid = None
+        ts = int(raw)
+    return pid, datetime.fromtimestamp(ts, TZ)
 
 
 def group_reminder_text(events: list[DoseEvent]) -> str:
@@ -219,8 +340,8 @@ def group_reminder_text(events: list[DoseEvent]) -> str:
     return joke + "\n\n" + "\n".join(lines)
 
 
-async def get_pending_group_by_key(session: AsyncSession, group_key: int) -> list[DoseEvent]:
-    due = group_due_from_key(group_key)
+async def get_pending_group_by_key(session: AsyncSession, group_key: str | int) -> list[DoseEvent]:
+    profile_id, due = parse_group_key(group_key)
     start = due - timedelta(seconds=1)
     end = due + timedelta(seconds=1)
     q = select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
@@ -229,12 +350,14 @@ async def get_pending_group_by_key(session: AsyncSession, group_key: int) -> lis
         DoseEvent.due_at >= start,
         DoseEvent.due_at <= end,
     ).order_by(DoseEvent.due_at, DoseEvent.id)
+    if profile_id is not None:
+        q = q.where(Schedule.profile_id == profile_id)
     return list((await session.execute(q)).scalars().all())
 
 
 async def mark_group_taken(
     session: AsyncSession,
-    group_key: int,
+    group_key: str | int,
     tg_id: int,
     actual_time: str | None = None,
 ) -> list[DoseEvent]:
@@ -254,7 +377,7 @@ async def mark_group_taken(
     return events
 
 
-async def mark_group_skipped(session: AsyncSession, group_key: int, tg_id: int) -> list[DoseEvent]:
+async def mark_group_skipped(session: AsyncSession, group_key: str | int, tg_id: int) -> list[DoseEvent]:
     events = await get_pending_group_by_key(session, group_key)
     if not events:
         return []
@@ -271,7 +394,7 @@ async def mark_group_skipped(session: AsyncSession, group_key: int, tg_id: int) 
     return events
 
 
-async def snooze_group(session: AsyncSession, group_key: int, tg_id: int, minutes: int | None = None) -> list[DoseEvent]:
+async def snooze_group(session: AsyncSession, group_key: str | int, tg_id: int, minutes: int | None = None) -> list[DoseEvent]:
     events = await get_pending_group_by_key(session, group_key)
     if not events:
         return []
@@ -475,7 +598,7 @@ def format_today(events: list[DoseEvent]) -> str:
     return "\n".join(lines)
 
 
-async def get_history_for_medicine(session: AsyncSession, medicine_id: int, days: int = 30) -> list[DoseEvent]:
+async def get_history_for_medicine(session: AsyncSession, medicine_id: int, days: int = 30, profile_id: int | None = None) -> list[DoseEvent]:
     now = datetime.now(TZ)
     start = now - timedelta(days=days)
     q = select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
@@ -483,10 +606,12 @@ async def get_history_for_medicine(session: AsyncSession, medicine_id: int, days
         DoseEvent.due_at >= start,
         DoseEvent.due_at <= now,
     ).order_by(DoseEvent.due_at.desc())
+    if profile_id is not None:
+        q = q.where(Schedule.profile_id == profile_id)
     return list((await session.execute(q)).scalars().all())
 
 
-async def get_stats(session: AsyncSession, medicine_id: int | None = None, days: int = 30) -> list[dict]:
+async def get_stats(session: AsyncSession, medicine_id: int | None = None, days: int = 30, profile_id: int | None = None) -> list[dict]:
     now = datetime.now(TZ)
     start = now - timedelta(days=days)
     q = select(
@@ -500,6 +625,8 @@ async def get_stats(session: AsyncSession, medicine_id: int | None = None, days:
         DoseEvent.due_at >= start,
         DoseEvent.due_at <= now
     ).group_by(Medicine.id, Medicine.name).order_by(Medicine.name)
+    if profile_id is not None:
+        q = q.where(Schedule.profile_id == profile_id)
     if medicine_id:
         q = q.where(Medicine.id == medicine_id)
     rows = (await session.execute(q)).all()

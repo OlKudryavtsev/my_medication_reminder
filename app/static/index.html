@@ -24,7 +24,7 @@
     [data-theme="dark"] .top{background:linear-gradient(180deg,var(--bg) 76%,rgba(13,17,23,0))}
     .head{display:flex;align-items:center;justify-content:space-between;gap:10px}
     h1{font-size:22px;line-height:1.1;margin:0;font-weight:850;letter-spacing:-.03em}.sub{color:var(--muted);font-size:12px;margin-top:5px}
-    .themeBtn{border:1px solid var(--line);background:var(--card);color:var(--text);box-shadow:none;border-radius:999px;width:42px;height:34px;padding:0;font-size:17px;flex:0 0 auto}
+    .themeBtn{border:1px solid var(--line);background:var(--card);color:var(--text);box-shadow:none;border-radius:999px;width:42px;height:34px;padding:0;font-size:17px;flex:0 0 auto}.profileBar{margin-top:10px;display:grid;grid-template-columns:74px minmax(0,1fr);gap:8px;align-items:center}.profileBar label{margin:0;font-size:10px}.profileBar select{min-height:36px;height:36px;font-size:14px;padding:7px 10px;border-radius:12px}
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin:10px 0}.card h2{font-size:17px;margin:0 0 10px}.muted{color:var(--muted)}
     .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--brand2);color:var(--brand);font-size:12px;font-weight:800;margin-bottom:8px}
 
@@ -56,7 +56,7 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="top"><div class="head"><div><h1>💊 Семейная аптечка</h1><div class="sub">Лекарства, отметки, история и спокойные родители</div></div><button class="themeBtn" onclick="toggleTheme()" id="themeBtn">🌙</button></div></div>
+    <div class="top"><div class="head"><div><h1>💊 Семейная аптечка</h1><div class="sub">Лекарства, отметки, история и спокойные родители</div></div><button class="themeBtn" onclick="toggleTheme()" id="themeBtn">🌙</button></div><div id="profileBar" class="profileBar hidden"><label>Профиль</label><select id="profileSelect" onchange="changeProfile()"></select></div></div>
     <div id="access" class="card hidden"></div>
     <main id="main" class="hidden">
       <section id="pageToday" class="page"><div class="card"><span class="badge">Сегодня</span><div class="filters"><button id="filterPending" class="filterBtn active" onclick="setTodayFilter('pending')">Не принято</button><button id="filterSnoozed" class="filterBtn" onclick="setTodayFilter('snoozed')">Отложено</button><button id="filterSkipped" class="filterBtn" onclick="setTodayFilter('skipped')">Пропущено</button><button id="filterTaken" class="filterBtn" onclick="setTodayFilter('taken')">Выпил</button><button id="filterAll" class="filterBtn" onclick="setTodayFilter('all')">Все</button></div><div id="today">Загрузка...</div></div></section>
@@ -129,6 +129,28 @@
       ${option('skipped','⏭️ Пропущено')}
     </div>`, ()=>closeModal(document.getElementById('modalStatus').value));
   }
+
+  async function loadProfiles(){
+    profiles = await api('/api/profiles');
+    if(!profiles.length)return;
+    currentProfileId = Number(localStorage.getItem('activeProfileId')) || (profiles.find(p=>p.active)?.id) || profiles[0].id;
+    if(!profiles.some(p=>p.id===currentProfileId)) currentProfileId = profiles[0].id;
+    const sel=document.getElementById('profileSelect');
+    sel.innerHTML=profiles.map(p=>`<option value="${p.id}">${escapeHtml(p.kind==='personal'?'👤 '+p.name:'👶 '+p.name)}</option>`).join('');
+    sel.value=String(currentProfileId);
+    document.getElementById('profileBar').classList.toggle('hidden', profiles.length<2);
+  }
+  async function changeProfile(){
+    currentProfileId=Number(document.getElementById('profileSelect').value);
+    localStorage.setItem('activeProfileId', String(currentProfileId));
+    try{ await api('/api/active-profile',{method:'POST',body:JSON.stringify({profile_id:currentProfileId})}); }catch(e){}
+    editSchedules.clear();
+    await loadToday();
+    if(!document.getElementById('pageStats').classList.contains('hidden')) await loadStats();
+    if(!document.getElementById('pageHistory').classList.contains('hidden')) await loadMedicines();
+    if(!document.getElementById('pageAdmin').classList.contains('hidden')) await loadSchedules();
+  }
+
   function pageId(name){return 'page'+name[0].toUpperCase()+name.slice(1)} function tabId(name){return 'tab'+name[0].toUpperCase()+name.slice(1)}
   function showTab(name){['today','stats','history','admin'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});document.getElementById(pageId(name)).classList.remove('hidden');document.getElementById(tabId(name)).classList.add('active');location.hash=name==='today'?'':'#'+name;if(name==='today')loadToday();if(name==='stats')loadStats();if(name==='history')loadMedicines();if(name==='admin')loadSchedules();window.scrollTo({top:0,behavior:'smooth'});}
   function setTodayFilter(f){todayFilter=f;localStorage.setItem('todayFilter',f);renderToday()}
@@ -204,14 +226,14 @@
   }
   function enableScheduleEdit(id){editSchedules.add(id);loadSchedules()}
   function cancelScheduleEdit(id){editSchedules.delete(id);scheduleDrafts.delete(id);loadSchedules()}
-  async function loadSchedules(){if(!me?.is_parent)return;const rows=await api('/api/schedules');const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
+  async function loadSchedules(){if(!me?.can_manage_current_profile)return;const rows=await api('/api/schedules');const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
   function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday()}
   function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
   function renderFrequencySlots(){const {count}=parseFrequency();const root=document.getElementById('frequencySlots');let defaults=['09:00','15:00','21:00'];root.innerHTML=Array.from({length:count},(_,i)=>`<div class="slotGroup"><div class="slotGroupTitle">Прием ${i+1}</div><div class="slotRow"><label>Время</label><input id="slotTime${i}" type="time" value="${defaults[i]||'09:00'}"></div><div class="slotRow"><label>Комментарий</label><input id="slotLabel${i}" placeholder="например, после еды"></div></div>`).join('')}
   let addScheduleInProgress=false;
   async function addSchedule(){
-    if(!me?.is_parent){toast('Доступно только родителям');return}
+    if(!me?.can_manage_current_profile){toast('Нет доступа к управлению этим профилем');return}
     if(addScheduleInProgress){toast('Уже добавляю лекарство...');return}
     const f=parseFrequency();
     const entries=[];
@@ -239,7 +261,7 @@
   async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
   async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable historyTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table></div>`}
-  async function init(){try{renderFrequencySlots();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.is_parent)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.is_parent)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+  async function init(){try{renderFrequencySlots();me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();
 </script>
 </body>
