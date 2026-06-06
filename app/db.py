@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -52,9 +52,20 @@ class TreatmentCourse(Base):
     name: Mapped[str] = mapped_column(String(255), default="")
     doctor: Mapped[str] = mapped_column(String(255), default="")
     comment: Mapped[str] = mapped_column(Text, default="")
+    assignment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TreatmentAttachment(Base):
+    __tablename__ = "treatment_attachments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("treatment_courses.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    data: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -161,6 +172,7 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "users", "active_profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "course_id", "INTEGER")
+    await _add_column_if_missing(conn, "treatment_courses", "assignment_date", date_type)
     await _add_column_if_missing(conn, "schedules", "start_date", date_type)
     await _add_column_if_missing(conn, "schedules", "end_date", date_type)
     await _add_column_if_missing(conn, "schedules", "recurrence_type", "VARCHAR(20) DEFAULT 'daily'")

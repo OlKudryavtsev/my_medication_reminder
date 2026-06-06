@@ -9,8 +9,8 @@ from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, ORJSONResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi.responses import FileResponse, ORJSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -56,6 +56,7 @@ from .service import (
     set_meal_time_for_day,
     get_meal_overrides_for_day,
     normalize_recurrence,
+    schedule_due_hhmm,
 )
 
 settings = get_settings()
@@ -117,8 +118,7 @@ class ProfilePayload(BaseModel):
 
 class CoursePayload(BaseModel):
     name: str
-    start_date: str | None = None
-    end_date: str | None = None
+    assignment_date: str | None = None
     doctor: str = ""
     comment: str = ""
 
@@ -357,17 +357,18 @@ async def api_courses(request: Request):
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile_manager(request, session)
         rows = await get_courses(session, profile_id)
-        return [
-            {
+        result = []
+        for c in rows:
+            attachments = (await session.execute(select(TreatmentAttachment).where(TreatmentAttachment.course_id == c.id).order_by(TreatmentAttachment.id.desc()))).scalars().all()
+            result.append({
                 "id": c.id,
                 "name": c.name,
-                "start_date": c.start_date.isoformat() if c.start_date else "",
-                "end_date": c.end_date.isoformat() if c.end_date else "",
+                "assignment_date": c.assignment_date.isoformat() if c.assignment_date else "",
                 "doctor": c.doctor or "",
                 "comment": c.comment or "",
-            }
-            for c in rows
-        ]
+                "attachments": [{"id": a.id, "filename": a.filename, "content_type": a.content_type} for a in attachments],
+            })
+        return result
 
 
 @app.post("/api/courses")
@@ -378,8 +379,7 @@ async def api_create_course(payload: CoursePayload, request: Request):
             session,
             profile_id=profile_id,
             name=payload.name,
-            start_date=parse_date_or_none(payload.start_date),
-            end_date=parse_date_or_none(payload.end_date),
+            assignment_date=parse_date_or_none(payload.assignment_date),
             doctor=payload.doctor,
             comment=payload.comment,
             actor_tg_id=tg_id,
@@ -396,8 +396,7 @@ async def api_update_course(course_id: int, payload: CoursePayload, request: Req
             profile_id=profile_id,
             course_id=course_id,
             name=payload.name,
-            start_date=parse_date_or_none(payload.start_date),
-            end_date=parse_date_or_none(payload.end_date),
+            assignment_date=parse_date_or_none(payload.assignment_date),
             doctor=payload.doctor,
             comment=payload.comment,
             actor_tg_id=tg_id,
@@ -415,6 +414,35 @@ async def api_delete_course(course_id: int, request: Request):
         if not course:
             raise HTTPException(status_code=404, detail="Course not found")
         return {"ok": True}
+
+
+@app.post("/api/courses/{course_id}/attachments")
+async def api_upload_course_attachment(course_id: int, request: Request, file: UploadFile = File(...)):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        course = (await session.execute(select(TreatmentCourse).where(TreatmentCourse.id == course_id, TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True))).scalar_one_or_none()
+        if not course:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        data = await file.read()
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File is too large; max 8 MB")
+        att = TreatmentAttachment(course_id=course_id, filename=file.filename or "attachment", content_type=file.content_type or "application/octet-stream", data=data)
+        session.add(att)
+        await session.flush()
+        await log_action(session, profile_id, tg_id, "assignment_file_added", "course", course_id, f"Добавлен файл к назначению: {att.filename}", commit=False)
+        await session.commit()
+        return {"ok": True, "id": att.id, "filename": att.filename}
+
+
+@app.get("/api/attachments/{attachment_id}")
+async def api_download_attachment(attachment_id: int, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile(request, session)
+        att = (await session.execute(select(TreatmentAttachment).join(TreatmentCourse, TreatmentCourse.id == TreatmentAttachment.course_id).where(TreatmentAttachment.id == attachment_id, TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True))).scalar_one_or_none()
+        if not att:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        headers = {"Content-Disposition": f'inline; filename="{att.filename}"'}
+        return Response(content=att.data, media_type=att.content_type or "application/octet-stream", headers=headers)
 
 
 @app.get("/api/today", response_class=ORJSONResponse)
@@ -631,12 +659,16 @@ async def api_schedules(request: Request):
         rows = (await session.execute(
             select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.active == True, Schedule.profile_id == profile_id).order_by(Schedule.time_local)  # noqa: E712
         )).scalars().all()
-        return [
-            {
+        today = datetime.now(TZ).date()
+        result = []
+        for r in rows:
+            display_time = await schedule_due_hhmm(session, r, today)
+            result.append({
                 "id": r.id,
                 "name": r.medicine.name,
                 "dose": r.dose,
                 "time_local": r.time_local,
+                "display_time": display_time,
                 "label": r.label,
                 "start_date": r.start_date.isoformat() if r.start_date else "",
                 "end_date": r.end_date.isoformat() if r.end_date else "",
@@ -649,9 +681,9 @@ async def api_schedules(request: Request):
                 "meal_name": r.meal_name or "",
                 "meal_offset_minutes": r.meal_offset_minutes or 0,
                 "active": r.active,
-            }
-            for r in rows
-        ]
+            })
+        result.sort(key=lambda x: (x["display_time"], x["name"]))
+        return result
 
 
 @app.post("/api/schedules")

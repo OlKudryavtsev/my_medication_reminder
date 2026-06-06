@@ -189,28 +189,27 @@ async def get_audit_log(session: AsyncSession, profile_id: int, limit: int = 50)
 
 
 async def get_courses(session: AsyncSession, profile_id: int) -> list[TreatmentCourse]:
-    return list((await session.execute(select(TreatmentCourse).where(TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True).order_by(TreatmentCourse.start_date.desc().nullslast(), TreatmentCourse.id.desc()))).scalars().all())
+    return list((await session.execute(select(TreatmentCourse).where(TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True).order_by(TreatmentCourse.assignment_date.desc().nullslast(), TreatmentCourse.id.desc()))).scalars().all())
 
 
-async def create_course(session: AsyncSession, profile_id: int, name: str, start_date: date | None, end_date: date | None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse:
-    c = TreatmentCourse(profile_id=profile_id, name=name.strip() or "Курс лечения", start_date=start_date, end_date=end_date, doctor=doctor or "", comment=comment or "", active=True)
+async def create_course(session: AsyncSession, profile_id: int, name: str, assignment_date: date | None = None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse:
+    c = TreatmentCourse(profile_id=profile_id, name=name.strip() or "Назначение", assignment_date=assignment_date, doctor=doctor or "", comment=comment or "", active=True)
     session.add(c)
     await session.flush()
-    await log_action(session, profile_id, actor_tg_id, "course_created", "course", c.id, f"Создан курс: {c.name}")
+    await log_action(session, profile_id, actor_tg_id, "course_created", "course", c.id, f"Создано назначение: {c.name}")
     await session.commit()
     return c
 
 
-async def update_course(session: AsyncSession, profile_id: int, course_id: int, name: str, start_date: date | None, end_date: date | None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse | None:
+async def update_course(session: AsyncSession, profile_id: int, course_id: int, name: str, assignment_date: date | None = None, doctor: str = "", comment: str = "", actor_tg_id: int | None = None) -> TreatmentCourse | None:
     c = (await session.execute(select(TreatmentCourse).where(TreatmentCourse.id == course_id, TreatmentCourse.profile_id == profile_id, TreatmentCourse.active == True))).scalar_one_or_none()
     if not c:
         return None
     c.name = name.strip() or c.name
-    c.start_date = start_date
-    c.end_date = end_date
+    c.assignment_date = assignment_date
     c.doctor = doctor or ""
     c.comment = comment or ""
-    await log_action(session, profile_id, actor_tg_id, "course_updated", "course", c.id, f"Изменен курс: {c.name}")
+    await log_action(session, profile_id, actor_tg_id, "course_updated", "course", c.id, f"Изменено назначение: {c.name}")
     await session.commit()
     return c
 
@@ -224,7 +223,7 @@ async def deactivate_course(session: AsyncSession, profile_id: int, course_id: i
         rows = (await session.execute(select(Schedule).where(Schedule.course_id == course_id, Schedule.profile_id == profile_id, Schedule.active == True))).scalars().all()
         for r in rows:
             r.active = False
-    await log_action(session, profile_id, actor_tg_id, "course_deleted", "course", c.id, f"Завершен/удален курс: {c.name}")
+    await log_action(session, profile_id, actor_tg_id, "course_deleted", "course", c.id, f"Удалено назначение: {c.name}")
     await session.commit()
     return c
 

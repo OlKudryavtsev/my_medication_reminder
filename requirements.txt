@@ -8,3 +8,4 @@ python-dotenv==1.0.1
 APScheduler==3.10.4
 pydantic-settings==2.3.4
 orjson==3.10.6
+python-multipart==0.0.9
