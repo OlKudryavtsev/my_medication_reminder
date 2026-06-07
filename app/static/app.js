@@ -162,10 +162,11 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
     if(label) label.textContent=open?openText:closedText;
     if(chev) chev.textContent=open?'−':'＋';
   }
-  function toggleAddMedicineForm(){
+  async function toggleAddMedicineForm(){
     addMedicineOpen=!addMedicineOpen;
     document.getElementById('addMedicineForm')?.classList.toggle('hidden', !addMedicineOpen);
     setCollapseButton('addMedicineToggle', addMedicineOpen, 'Скрыть форму добавления', 'Добавить лекарство');
+    if(addMedicineOpen){await populateInventoryLinkSelect();}
   }
   function toggleAddAssignmentForm(){
     addAssignmentOpen=!addAssignmentOpen;
@@ -194,6 +195,12 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
     const names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
     sel.innerHTML='<option value="">Выберите лекарство</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
     if(current && names.includes(current)) sel.value=current;
+  }
+  async function populateInventoryLinkSelect(selectedId=''){
+    const sel=document.getElementById('inventoryLinkSelect'); if(!sel)return;
+    let rows=[]; try{rows=await api('/api/inventory-options')}catch(e){rows=[]}
+    sel.innerHTML='<option value="">Не связано</option>'+rows.map(i=>`<option value="${i.id}">${escapeHtml(i.name)} · осталось ${i.quantity} ${escapeHtml(i.unit_name||'шт')}</option>`).join('');
+    if(selectedId) sel.value=String(selectedId);
   }
   function attachmentUrl(id){return `/api/attachments/${id}?profile_id=${currentProfileId||''}`}
   function inventoryPhotoUrl(i){return `${i.photo_url}?profile_id=${currentProfileId||''}&t=${Date.now()}`}
@@ -401,6 +408,7 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
+    coursesCache=rows;
     const sel=document.getElementById('courseSelect');
     if(sel) sel.innerHTML='<option value="">Без назначения</option>'+rows.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     const root=document.getElementById('coursesBox');
@@ -413,6 +421,12 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   async function uploadCourseFile(id){const el=document.getElementById('courseFile_'+id);if(!el?.files?.[0])return;await uploadFileToCourse(id,el.files[0]);toast('Файл добавлен');await loadCourses();await loadAudit()}
   const editSchedules = new Set();
   const scheduleDrafts = new Map();
+  let coursesCache=[];
+  let inventoryCache=[];
+  function fmtNum(v){if(v===null||v===undefined||v==='')return '—'; const n=Number(v); if(!Number.isFinite(n))return String(v); return Number.isInteger(n)?String(n):String(Math.round(n*10)/10)}
+  function courseOptionsHtml(selected=''){return (coursesCache||[]).map(c=>`<option value="${c.id}" ${String(selected)===String(c.id)?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
+  function inventoryOptionsHtml(selected=''){return (inventoryCache||[]).map(i=>`<option value="${i.id}" ${String(selected)===String(i.id)?'selected':''}>${escapeHtml(i.name)} · ${i.quantity} ${escapeHtml(i.unit_name||'шт')}</option>`).join('')}
+
   function fieldHtml(id, value, editable, type='text'){
     const safe = escapeHtml(value || '');
     if(editable) return `<input id="${id}" ${type!=='text'?`type="${type}"`:''} value="${safe}">`;
@@ -428,13 +442,14 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
       </div>
       <div class="schedComment"><label>Комментарий</label>${fieldHtml('s_label_'+r.id, r.label, edit)}</div>
       <div class="schedDates"><div><label>Дата начала</label>${fieldHtml('s_start_'+r.id, r.start_date || '', edit, 'date')}</div><div><label>Дата окончания</label>${fieldHtml('s_end_'+r.id, r.end_date || '', edit, 'date')}</div></div>
+      ${edit?`<div class="fieldLine"><label>Назначение</label><select id="s_course_${r.id}"><option value="">Без назначения</option>${courseOptionsHtml(r.course_id||'')}</select></div><div class="fieldLine"><label>Аптечка</label><select id="s_inventory_${r.id}"><option value="">Не связано</option>${inventoryOptionsHtml(r.inventory_item_id||'')}</select></div><div class="dateLine"><div><label>Списывать</label><input id="s_consume_${r.id}" type="number" min="0" step="0.1" value="${r.consume_units_per_dose||1}"></div><div><label>Ед.</label><input id="s_consume_unit_${r.id}" value="${escapeAttr(r.consume_unit_name||'шт')}"></div></div>`:`<div class="meta">${r.course_id?'Назначение привязано · ':''}${r.inventory_item_id?'Аптечка: '+escapeHtml(r.inventory_item_name||'связано')+' · ':''}нужно: ${fmtNum(r.planned_units_total)} ${escapeHtml(r.consume_unit_name||'шт')} · осталось нужно: ${fmtNum(r.remaining_need_units)}${r.inventory_quantity!=null?' · в аптечке: '+fmtNum(r.inventory_quantity):''}${r.shortage_units>0?' · ⚠️ не хватает '+fmtNum(r.shortage_units):''}</div>`}
       <div class="adminActions">${edit?`<button onclick="saveSchedule(${r.id})">Сохранить</button><button class="gray" onclick="cancelScheduleEdit(${r.id})">Отменить</button>`:`<button class="blue" onclick="enableScheduleEdit(${r.id})">Изменить</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button>`}</div>
     </div>`
   }
-  function enableScheduleEdit(id){editSchedules.add(id);loadSchedules()}
+  async function enableScheduleEdit(id){editSchedules.add(id);await populateInventoryLinkSelect();await loadCourses();await loadSchedules()}
   function cancelScheduleEdit(id){editSchedules.delete(id);scheduleDrafts.delete(id);loadSchedules()}
-  async function loadSchedules(){if(!me?.can_manage_current_profile)return;let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
-  function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
+  async function loadSchedules(){if(!me?.can_manage_current_profile)return;try{inventoryCache=await api('/api/inventory-options')}catch(e){inventoryCache=[]}let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
+  function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null,course_id:document.getElementById('s_course_'+id)?.value?Number(document.getElementById('s_course_'+id).value):null,inventory_item_id:document.getElementById('s_inventory_'+id)?.value?Number(document.getElementById('s_inventory_'+id).value):null,consume_units_per_dose:Number(document.getElementById('s_consume_'+id)?.value||1),consume_unit_name:document.getElementById('s_consume_unit_'+id)?.value||'шт'}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday();loadAudit()}
   function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
   function mealForIndex(i){return ['breakfast','lunch','dinner'][i] || 'breakfast'}
@@ -458,7 +473,7 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
       if(time && !seen.has(key)){seen.add(key);entries.push({time_local:time,label:label||time,timing_template:timingTemplate,meal_name:meal,meal_offset_minutes:offset})}
     }
     const weekdays=[...document.getElementById('weekdays').selectedOptions].map(o=>o.value).join(',');
-    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),course_id:document.getElementById('courseSelect').value?Number(document.getElementById('courseSelect').value):null,start_date:document.getElementById('medStart').value||null,end_date:document.getElementById('medEnd').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,weekdays,specific_dates:'',entries};
+    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),course_id:document.getElementById('courseSelect').value?Number(document.getElementById('courseSelect').value):null,inventory_item_id:document.getElementById('inventoryLinkSelect')?.value?Number(document.getElementById('inventoryLinkSelect').value):null,consume_units_per_dose:Number(document.getElementById('consumeUnits')?.value||1),consume_unit_name:document.getElementById('consumeUnitName')?.value||'шт',start_date:document.getElementById('medStart').value||null,end_date:document.getElementById('medEnd').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,weekdays,specific_dates:'',entries};
     if(!payload.name||!payload.dose||!entries.length){toast('Заполните лекарство, дозу и хотя бы одно время');return}
     addScheduleInProgress=true;
     try{

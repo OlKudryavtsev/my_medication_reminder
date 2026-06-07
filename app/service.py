@@ -304,6 +304,110 @@ def normalize_recurrence(kind: str | None, interval_days: int | None) -> tuple[s
     return "daily", max(1, int(interval_days or 1))
 
 
+def parse_dose_amount(dose: str) -> tuple[float, str]:
+    """Best-effort parser for dose text. Returns amount and unit.
+
+    Examples: "1 таб" -> (1, "таб"), "1/2 таблетки" -> (0.5, "таблетки"),
+    "5 мл" -> (5, "мл"). Ambiguous text falls back to 1 шт.
+    """
+    import re
+    value = (dose or "").strip().replace(",", ".")
+    if not value:
+        return 1.0, "шт"
+    m = re.search(r"(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)", value)
+    if m:
+        try:
+            amount = float(m.group(1)) / float(m.group(2))
+        except Exception:
+            amount = 1.0
+        rest = value[m.end():].strip()
+        unit = rest.split()[0] if rest else "шт"
+        return amount, unit
+    m = re.search(r"\d+(?:\.\d+)?", value)
+    if m:
+        try:
+            amount = float(m.group(0))
+        except Exception:
+            amount = 1.0
+        rest = value[m.end():].strip()
+        unit = rest.split()[0] if rest else "шт"
+        return amount, unit
+    return 1.0, "шт"
+
+
+def count_planned_days_for_schedule(sched: Schedule, horizon_days: int = 365) -> int:
+    start = sched.start_date or datetime.now(TZ).date()
+    end = sched.end_date or (start + timedelta(days=horizon_days - 1))
+    if end < start:
+        return 0
+    max_end = start + timedelta(days=horizon_days - 1)
+    if end > max_end:
+        end = max_end
+    total = 0
+    day = start
+    while day <= end:
+        if schedule_applies_on_day(sched, day):
+            total += 1
+        day += timedelta(days=1)
+    return total
+
+
+def refresh_schedule_need_fields(sched: Schedule) -> None:
+    amount = float(getattr(sched, "consume_units_per_dose", None) or 0)
+    if amount <= 0:
+        amount, unit = parse_dose_amount(getattr(sched, "dose", ""))
+        sched.consume_units_per_dose = amount
+        if not getattr(sched, "consume_unit_name", ""):
+            sched.consume_unit_name = unit
+    days_count = count_planned_days_for_schedule(sched)
+    sched.planned_doses_count = days_count
+    sched.planned_units_total = round(days_count * float(sched.consume_units_per_dose or 1), 3)
+
+
+async def inventory_item_for_schedule(session: AsyncSession, sched: Schedule) -> InventoryItem | None:
+    if getattr(sched, "inventory_item_id", None):
+        item = (await session.execute(select(InventoryItem).where(
+            InventoryItem.id == sched.inventory_item_id,
+            InventoryItem.active == True,
+        ))).scalar_one_or_none()
+        if item:
+            return item
+    med = getattr(sched, "medicine", None)
+    if not med:
+        return None
+    return (await session.execute(select(InventoryItem).where(
+        InventoryItem.profile_id == sched.profile_id,
+        InventoryItem.active == True,
+        or_(InventoryItem.medicine_id == med.id, InventoryItem.name == med.name),
+    ).order_by(InventoryItem.medicine_id.desc(), InventoryItem.id))).scalars().first()
+
+
+async def schedule_stock_info(session: AsyncSession, sched: Schedule) -> dict:
+    refresh_schedule_need_fields(sched)
+    item = await inventory_item_for_schedule(session, sched)
+    taken_units = 0.0
+    rows = (await session.execute(select(DoseEvent).where(
+        DoseEvent.schedule_id == sched.id,
+        DoseEvent.status == "taken",
+    ))).scalars().all()
+    taken_units = len(rows) * float(getattr(sched, "consume_units_per_dose", 1) or 1)
+    remaining_need = max(0.0, float(getattr(sched, "planned_units_total", 0) or 0) - taken_units)
+    stock = float(item.quantity) if item else None
+    shortage = max(0.0, remaining_need - stock) if stock is not None else None
+    return {
+        "inventory_item_id": item.id if item else None,
+        "inventory_item_name": item.name if item else "",
+        "inventory_quantity": stock,
+        "planned_doses_count": int(getattr(sched, "planned_doses_count", 0) or 0),
+        "planned_units_total": float(getattr(sched, "planned_units_total", 0) or 0),
+        "taken_units": taken_units,
+        "remaining_need_units": remaining_need,
+        "shortage_units": shortage,
+        "consume_units_per_dose": float(getattr(sched, "consume_units_per_dose", 1) or 1),
+        "consume_unit_name": getattr(sched, "consume_unit_name", "") or (item.unit_name if item else "шт"),
+    }
+
+
 async def upsert_medicine(session: AsyncSession, name: str, dose: str) -> Medicine:
     med = (await session.execute(select(Medicine).where(Medicine.name == name))).scalar_one_or_none()
     if med:
@@ -333,6 +437,9 @@ async def add_schedule(
     timing_template: str = "fixed",
     meal_name: str = "",
     meal_offset_minutes: int = 0,
+    inventory_item_id: int | None = None,
+    consume_units_per_dose: float | None = None,
+    consume_unit_name: str = "",
 ) -> Schedule:
     med = await upsert_medicine(session, name, dose)
     item = Schedule(
@@ -351,7 +458,11 @@ async def add_schedule(
         timing_template=timing_template or "fixed",
         meal_name=meal_name or "",
         meal_offset_minutes=meal_offset_minutes or 0,
+        inventory_item_id=inventory_item_id,
+        consume_units_per_dose=float(consume_units_per_dose or parse_dose_amount(dose)[0]),
+        consume_unit_name=consume_unit_name or parse_dose_amount(dose)[1],
     )
+    refresh_schedule_need_fields(item)
     session.add(item)
     await session.flush()
     return item
@@ -729,6 +840,9 @@ async def update_schedule(
     timing_template: str | None = None,
     meal_name: str | None = None,
     meal_offset_minutes: int | None = None,
+    inventory_item_id: int | None = None,
+    consume_units_per_dose: float | None = None,
+    consume_unit_name: str | None = None,
 ) -> Schedule | None:
     sched = (await session.execute(
         select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.id == schedule_id)
@@ -752,6 +866,12 @@ async def update_schedule(
     sched.timing_template = timing_template or "fixed"
     sched.meal_name = meal_name or ""
     sched.meal_offset_minutes = meal_offset_minutes or 0
+    sched.inventory_item_id = inventory_item_id
+    if consume_units_per_dose is not None:
+        sched.consume_units_per_dose = float(consume_units_per_dose or 1)
+    if consume_unit_name is not None:
+        sched.consume_unit_name = consume_unit_name or sched.consume_unit_name or parse_dose_amount(dose)[1]
+    refresh_schedule_need_fields(sched)
     sched.active = True
 
     # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.
@@ -796,17 +916,14 @@ def format_today(events: list[DoseEvent]) -> str:
 
 
 async def adjust_inventory_for_event(session: AsyncSession, event: DoseEvent, delta: int = -1) -> None:
-    """Adjust stock by 1 unit for a taken dose when inventory item exists."""
+    """Adjust stock by configured units per dose when inventory item exists."""
     if not event or not event.schedule or not event.schedule.medicine:
         return
-    med = event.schedule.medicine
-    item = (await session.execute(select(InventoryItem).where(
-        InventoryItem.profile_id == event.schedule.profile_id,
-        InventoryItem.active == True,
-        or_(InventoryItem.medicine_id == med.id, InventoryItem.name == med.name),
-    ).order_by(InventoryItem.medicine_id.desc(), InventoryItem.id))).scalars().first()
+    item = await inventory_item_for_schedule(session, event.schedule)
     if item:
-        item.quantity = max(0, int(item.quantity or 0) + int(delta))
+        amount = float(getattr(event.schedule, "consume_units_per_dose", 1) or 1)
+        # Current stock column is integer in earlier deployments, so keep safe integer math.
+        item.quantity = max(0, int(round(float(item.quantity or 0) + float(delta) * amount)))
 
 
 async def get_overdue_for_parent_alert(session: AsyncSession) -> list[DoseEvent]:

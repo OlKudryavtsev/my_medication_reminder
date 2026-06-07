@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -124,6 +124,11 @@ class Schedule(Base):
     timing_template: Mapped[str] = mapped_column(String(40), default="fixed")  # fixed/before_meal/with_meal/after_meal
     meal_name: Mapped[str] = mapped_column(String(20), default="")  # breakfast/lunch/dinner
     meal_offset_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    inventory_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    consume_units_per_dose: Mapped[float] = mapped_column(Float, default=1.0)
+    consume_unit_name: Mapped[str] = mapped_column(String(50), default="")
+    planned_doses_count: Mapped[int] = mapped_column(Integer, default=0)
+    planned_units_total: Mapped[float] = mapped_column(Float, default=0.0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     medicine: Mapped[Medicine] = relationship()
 
@@ -200,6 +205,11 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "schedules", "timing_template", "VARCHAR(40) DEFAULT 'fixed'")
     await _add_column_if_missing(conn, "schedules", "meal_name", "VARCHAR(20) DEFAULT ''")
     await _add_column_if_missing(conn, "schedules", "meal_offset_minutes", "INTEGER DEFAULT 0")
+    await _add_column_if_missing(conn, "schedules", "inventory_item_id", "INTEGER")
+    await _add_column_if_missing(conn, "schedules", "consume_units_per_dose", "DOUBLE PRECISION DEFAULT 1")
+    await _add_column_if_missing(conn, "schedules", "consume_unit_name", "VARCHAR(50) DEFAULT ''")
+    await _add_column_if_missing(conn, "schedules", "planned_doses_count", "INTEGER DEFAULT 0")
+    await _add_column_if_missing(conn, "schedules", "planned_units_total", "DOUBLE PRECISION DEFAULT 0")
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)

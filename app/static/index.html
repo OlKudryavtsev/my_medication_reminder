@@ -91,7 +91,9 @@
               <div class="fieldLine"><label>Лекарство</label><input id="name" placeholder="Аквадетрим" /></div>
               <div class="fieldLine"><label>Доза</label><input id="dose" placeholder="2 капли" /></div>
               <div class="fieldLine"><label>Назначение</label><select id="courseSelect"><option value="">Без назначения</option></select></div>
+              <div class="fieldLine"><label>Связать с аптечкой</label><select id="inventoryLinkSelect"><option value="">Не связано</option></select></div>
               <div class="dateLine"><div><label>Дата начала</label><input id="medStart" type="date"></div><div><label>Дата окончания</label><input id="medEnd" type="date"></div></div>
+              <div class="dateLine"><div><label>Списывать за прием</label><input id="consumeUnits" type="number" min="0" step="0.1" value="1"></div><div><label>Ед. списания</label><input id="consumeUnitName" placeholder="таб / капс / мл" value="шт"></div></div>
               <div class="fieldLine"><label>Шаблон</label><select id="timingTemplate" onchange="renderFrequencySlots()"><option value="fixed">Фиксированное время</option><option value="before_meal">За 30 мин до еды</option><option value="with_meal">Во время еды</option><option value="after_meal">После еды</option></select></div>
               <div class="fieldLine"><label>Периодичность</label><select id="frequency" onchange="renderFrequencySlots()">
                 <option value="daily:1:1">1 раз в день</option>

@@ -66,6 +66,9 @@ from .service import (
     evening_summary_text,
     get_inventory,
     low_stock_items,
+    parse_dose_amount,
+    refresh_schedule_need_fields,
+    schedule_stock_info,
 )
 
 settings = get_settings()
@@ -94,6 +97,9 @@ class AddSchedulePayload(BaseModel):
     recurrence_type: str = "daily"
     recurrence_interval_days: int = 1
     course_id: int | None = None
+    inventory_item_id: int | None = None
+    consume_units_per_dose: float | None = None
+    consume_unit_name: str = ""
     weekdays: str = ""
     specific_dates: str = ""
     entries: list[ScheduleEntryPayload] | None = None
@@ -854,6 +860,7 @@ async def api_schedules(request: Request):
         result = []
         for r in rows:
             display_time = await schedule_due_hhmm(session, r, today)
+            stock = await schedule_stock_info(session, r)
             result.append({
                 "id": r.id,
                 "name": r.medicine.name,
@@ -866,6 +873,16 @@ async def api_schedules(request: Request):
                 "recurrence_type": r.recurrence_type or "daily",
                 "recurrence_interval_days": r.recurrence_interval_days or 1,
                 "course_id": r.course_id,
+                "inventory_item_id": r.inventory_item_id or stock.get("inventory_item_id"),
+                "inventory_item_name": stock.get("inventory_item_name", ""),
+                "consume_units_per_dose": float(r.consume_units_per_dose or stock.get("consume_units_per_dose") or 1),
+                "consume_unit_name": r.consume_unit_name or stock.get("consume_unit_name") or "шт",
+                "planned_doses_count": stock.get("planned_doses_count", 0),
+                "planned_units_total": stock.get("planned_units_total", 0),
+                "taken_units": stock.get("taken_units", 0),
+                "remaining_need_units": stock.get("remaining_need_units", 0),
+                "inventory_quantity": stock.get("inventory_quantity"),
+                "shortage_units": stock.get("shortage_units"),
                 "weekdays": r.weekdays or "",
                 "specific_dates": r.specific_dates or "",
                 "timing_template": r.timing_template or "fixed",
@@ -900,6 +917,14 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         else:
             med.default_dose = payload.dose
             med.active = True
+        inv_id = payload.inventory_item_id
+        if inv_id:
+            inv = (await session.execute(select(InventoryItem).where(InventoryItem.id == inv_id, InventoryItem.profile_id == profile_id, InventoryItem.active == True))).scalar_one_or_none()
+            if not inv:
+                inv_id = None
+        default_amount, default_unit = parse_dose_amount(payload.dose)
+        consume_amount = float(payload.consume_units_per_dose or default_amount or 1)
+        consume_unit = payload.consume_unit_name or default_unit or "шт"
         created_ids: list[int] = []
         seen_entries: set[tuple[str, str]] = set()
         for entry in entries:
@@ -925,6 +950,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                     Schedule.recurrence_type == recurrence_type,
                     Schedule.recurrence_interval_days == recurrence_interval_days,
                     Schedule.course_id == payload.course_id,
+                    Schedule.inventory_item_id == inv_id,
+                    Schedule.consume_units_per_dose == consume_amount,
                     Schedule.weekdays == (payload.weekdays or ""),
                     Schedule.specific_dates == (payload.specific_dates or ""),
                     Schedule.timing_template == ((entry.timing_template or "fixed")),
@@ -952,7 +979,11 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 timing_template=entry.timing_template or "fixed",
                 meal_name=entry.meal_name or "",
                 meal_offset_minutes=entry.meal_offset_minutes or 0,
+                inventory_item_id=inv_id,
+                consume_units_per_dose=consume_amount,
+                consume_unit_name=consume_unit,
             )
+            refresh_schedule_need_fields(sched)
             session.add(sched)
             await session.flush()
             created_ids.append(sched.id)
@@ -986,6 +1017,9 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
             recurrence_type=payload.recurrence_type,
             recurrence_interval_days=payload.recurrence_interval_days,
             course_id=payload.course_id,
+            inventory_item_id=payload.inventory_item_id,
+            consume_units_per_dose=payload.consume_units_per_dose,
+            consume_unit_name=payload.consume_unit_name,
             weekdays=payload.weekdays,
             specific_dates=payload.specific_dates,
             timing_template=(payload.entries[0].timing_template if payload.entries else "fixed"),
@@ -1009,6 +1043,14 @@ async def api_delete_schedule(schedule_id: int, request: Request):
         await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален прием из расписания", commit=False)
         await session.commit()
         return {"ok": True}
+
+
+@app.get("/api/inventory-options", response_class=ORJSONResponse)
+async def api_inventory_options(request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        rows = (await session.execute(select(InventoryItem).where(InventoryItem.profile_id == profile_id, InventoryItem.active == True).order_by(InventoryItem.name))).scalars().all()  # noqa: E712
+        return [{"id": r.id, "name": r.name, "quantity": r.quantity, "unit_name": r.unit_name} for r in rows]
 
 
 @app.get("/api/inventory", response_class=ORJSONResponse)
