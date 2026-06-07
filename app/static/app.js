@@ -732,19 +732,25 @@
   function readHistoryGridPayload(){const start=document.getElementById('histStart')?.value;const end=document.getElementById('histEnd')?.value;const cells={};document.querySelectorAll('.histCell').forEach(sel=>{if(sel.value&&sel.value!=='none')cells[sel.dataset.key]=sel.value;});return {start_date:start,end_date:end,cells,overwrite_mode:document.getElementById('histOverwrite')?.value||'skip_existing',apply_inventory:document.getElementById('histInventory')?.value==='true',actual_time_mode:'planned'};}
 
 
-  // ===== v41 final UI/API overrides =====
+  // ===== v42 final UI/API overrides =====
   let selectedTodayDate = window.selectedTodayDate || new Date().toISOString().slice(0,10);
+  let calendarWeekStart = null;
   function parseYmdLocal(ymd){const [y,m,d]=String(ymd).split('-').map(Number);return new Date(y, (m||1)-1, d||1);}
   function ymdLocal(d){const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`;}
   function addDaysLocal(ymd, n){const d=parseYmdLocal(ymd);d.setDate(d.getDate()+n);return ymdLocal(d);}
+  function weekStartMonday(d){const x=new Date(d); const day=x.getDay(); const diff=(day===0?-6:1-day); x.setDate(x.getDate()+diff); x.setHours(0,0,0,0); return x;}
+  function ensureCalendarWeek(){if(!calendarWeekStart) calendarWeekStart=weekStartMonday(parseYmdLocal(selectedTodayDate));}
   function renderWeekCalendar(){
     const root=document.getElementById('weekCalendar'); if(!root)return;
-    const cur=parseYmdLocal(selectedTodayDate); const start=new Date(cur); start.setDate(cur.getDate()-3);
+    ensureCalendarWeek();
+    const today=ymdLocal(new Date());
     const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-    root.innerHTML=Array.from({length:14},(_,i)=>{const d=new Date(start); d.setDate(start.getDate()+i); const ymd=ymdLocal(d); return `<button class="dayChip ${ymd===selectedTodayDate?'active':''}" onclick="selectTodayDate('${ymd}')"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
-    const active=root.querySelector('.dayChip.active'); if(active) setTimeout(()=>active.scrollIntoView({inline:'center',block:'nearest'}),0);
+    const days=Array.from({length:7},(_,i)=>{const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i); const ymd=ymdLocal(d); return `<button class="dayChip ${ymd===selectedTodayDate?'active':''} ${ymd===today?'todayMark':''}" onclick="selectTodayDate('${ymd}')"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
+    root.innerHTML=`<div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button><button class="todayQuickBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div>`;
   }
-  async function selectTodayDate(ymd){selectedTodayDate=ymd; await loadToday();}
+  async function shiftWeek(delta){ensureCalendarWeek(); calendarWeekStart.setDate(calendarWeekStart.getDate()+delta*7); renderWeekCalendar();}
+  async function goTodayDate(){selectedTodayDate=ymdLocal(new Date()); calendarWeekStart=weekStartMonday(parseYmdLocal(selectedTodayDate)); await loadToday();}
+  async function selectTodayDate(ymd){selectedTodayDate=ymd; calendarWeekStart=weekStartMonday(parseYmdLocal(ymd)); await loadToday();}
   async function loadToday(){
     renderWeekCalendar();
     todayRows=await api('/api/today?day='+encodeURIComponent(selectedTodayDate));
@@ -789,7 +795,7 @@
     const rows=await api('/api/stats'+(courseId?`?course_id=${encodeURIComponent(courseId)}`:''));
     const root=document.getElementById('stats');
     if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}
-    root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`;
+    root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th>${me?.can_manage_current_profile?'<th></th>':''}</tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td>${me?.can_manage_current_profile?`<td><button class="tinyDanger" onclick="clearMedicineStats(${r.medicine_id}, '${escapeAttr(r.medicine)}')">Очистить</button></td>`:''}</tr>`).join('')}</table></div><div class="muted" style="font-size:12px;margin-top:8px">Если тестовое лекарство видно только в статистике, нажмите “Очистить”: будут удалены факты приемов по нему в текущем профиле, само расписание не меняется.</div>`;
   }
 
   function courseNeedPanel(g){
@@ -819,11 +825,19 @@
     const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');
     if(selected)rows=rows.filter(r=>(r.name||'')===selected);
     const root=document.getElementById('schedules'); const toolbar=document.querySelector('.scheduleToolbar');
-    if(toolbar){toolbar.innerHTML=`<div class="scheduleToolbarCompact ${scheduleGroupByAssignmentUi?'':'listMode'}"><div class="miniSwitch"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">Группировать</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Списком</button></div><div class="miniSwitch expandSwitch"><button onclick="setScheduleGroupsOpen(true)">Раскрыть</button><button onclick="setScheduleGroupsOpen(false)">Скрыть</button></div></div>`;}
+    if(toolbar){toolbar.innerHTML=`<div class="scheduleToolbarCompact ${scheduleGroupByAssignmentUi?'':'listMode'}"><div class="miniSwitch"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">Группировать</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Списком</button></div>${scheduleGroupByAssignmentUi?`<div class="miniSwitch expandSwitch"><button onclick="setScheduleGroupsOpen(true)">Раскрыть</button><button onclick="setScheduleGroupsOpen(false)">Скрыть</button></div>`:''}</div>`;}
     if(!rows.length){root.innerHTML='<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>';return;}
     if(!scheduleGroupByAssignmentUi){root.innerHTML=`<div class="scheduleListLikeToday">${rows.map(scheduleForm).join('')}</div>`;return;}
     const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});
     root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');if(!expandedScheduleGroups.has(key)) expandedScheduleGroups.add(key);const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" data-key="${key}" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span id="scheduleTreeChev_${key}">${open?'−':'＋'}</span></div><div id="scheduleTreeBody_${key}" class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');
+  }
+
+  async function clearMedicineStats(medicineId, name){
+    const ok=await confirmAction('Очистить статистику?', `Удалить факты приемов по препарату “${name}” в текущем профиле?`, 'Это уберет тестовый препарат из статистики. Активное расписание и аптечка не будут удалены.');
+    if(!ok)return;
+    await api('/api/stats/medicine/'+medicineId,{method:'DELETE'});
+    toast('Статистика очищена');
+    await loadStats();
   }
 
   async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}

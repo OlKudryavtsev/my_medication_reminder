@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, ORJSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, delete
 from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
@@ -1580,6 +1580,24 @@ async def api_stats(request: Request, medicine_id: int | None = None, days: int 
         tg_id, role, profile_id = await require_profile(request, session)
         return await get_stats(session, medicine_id=medicine_id, days=days, profile_id=profile_id, course_id=course_id)
 
+
+
+
+@app.delete("/api/stats/medicine/{medicine_id}")
+async def api_clear_medicine_stats(medicine_id: int, request: Request):
+    profile_id = await _profile_id(request)
+    tg_id = request.state.tg_id
+    async with SessionLocal() as session:
+        if not await is_profile_manager(session, profile_id, tg_id):
+            raise HTTPException(403, "Нет доступа")
+        schedule_ids = [r[0] for r in (await session.execute(
+            select(Schedule.id).where(Schedule.profile_id == profile_id, Schedule.medicine_id == medicine_id)
+        )).all()]
+        if schedule_ids:
+            await session.execute(delete(DoseEvent).where(DoseEvent.schedule_id.in_(schedule_ids)))
+            await log_action(session, profile_id, tg_id, "stats_cleared", "medicine", medicine_id, "Очищены факты приемов из статистики")
+        await session.commit()
+        return {"ok": True, "deleted_for_schedules": len(schedule_ids)}
 
 @app.get("/api/medicines", response_class=ORJSONResponse)
 async def api_medicines(request: Request):
