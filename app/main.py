@@ -917,14 +917,13 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         else:
             med.default_dose = payload.dose
             med.active = True
-        inv_id = payload.inventory_item_id
-        if inv_id:
-            inv = (await session.execute(select(InventoryItem).where(InventoryItem.id == inv_id, InventoryItem.profile_id == profile_id, InventoryItem.active == True))).scalar_one_or_none()
-            if not inv:
-                inv_id = None
+        # v29: inventory is not selected on a medicine row. It is matched automatically
+        # by medicine_id/name from the "Аптечка" tab. Dose is the only source for
+        # расход/потребность calculations.
+        inv_id = None
         default_amount, default_unit = parse_dose_amount(payload.dose)
-        consume_amount = float(payload.consume_units_per_dose or default_amount or 1)
-        consume_unit = payload.consume_unit_name or default_unit or "шт"
+        consume_amount = float(default_amount or 1)
+        consume_unit = default_unit or "шт"
         created_ids: list[int] = []
         seen_entries: set[tuple[str, str]] = set()
         for entry in entries:

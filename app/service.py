@@ -353,12 +353,12 @@ def count_planned_days_for_schedule(sched: Schedule, horizon_days: int = 365) ->
 
 
 def refresh_schedule_need_fields(sched: Schedule) -> None:
-    amount = float(getattr(sched, "consume_units_per_dose", None) or 0)
-    if amount <= 0:
-        amount, unit = parse_dose_amount(getattr(sched, "dose", ""))
-        sched.consume_units_per_dose = amount
-        if not getattr(sched, "consume_unit_name", ""):
-            sched.consume_unit_name = unit
+    # v29: dose is the single source of truth for course/inventory calculations.
+    # Fields consume_units_per_dose / consume_unit_name are kept as technical cached columns
+    # for backward compatibility with existing DB, but users no longer edit them separately.
+    amount, unit = parse_dose_amount(getattr(sched, "dose", ""))
+    sched.consume_units_per_dose = float(amount or 1)
+    sched.consume_unit_name = unit or "шт"
     days_count = count_planned_days_for_schedule(sched)
     sched.planned_doses_count = days_count
     sched.planned_units_total = round(days_count * float(sched.consume_units_per_dose or 1), 3)
@@ -866,11 +866,9 @@ async def update_schedule(
     sched.timing_template = timing_template or "fixed"
     sched.meal_name = meal_name or ""
     sched.meal_offset_minutes = meal_offset_minutes or 0
-    sched.inventory_item_id = inventory_item_id
-    if consume_units_per_dose is not None:
-        sched.consume_units_per_dose = float(consume_units_per_dose or 1)
-    if consume_unit_name is not None:
-        sched.consume_unit_name = consume_unit_name or sched.consume_unit_name or parse_dose_amount(dose)[1]
+    # inventory_item_id is intentionally not exposed in UI anymore; inventory is matched
+    # by the selected medicine from "Лекарства" / medicine_id and then by name.
+    sched.inventory_item_id = None
     refresh_schedule_need_fields(sched)
     sched.active = True
 
