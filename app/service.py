@@ -846,6 +846,8 @@ async def update_schedule(
     dosage_form: str | None = None,
     administration_route: str | None = None,
     analogs: str | None = None,
+    duration_value: int | None = None,
+    duration_unit: str | None = None,
 ) -> Schedule | None:
     sched = (await session.execute(
         select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.id == schedule_id)
@@ -872,6 +874,8 @@ async def update_schedule(
     sched.dosage_form = dosage_form or ""
     sched.administration_route = administration_route or ""
     sched.analogs = analogs or ""
+    sched.duration_value = duration_value
+    sched.duration_unit = duration_unit or ""
     # inventory_item_id is intentionally not exposed in UI anymore; inventory is matched
     # by the selected medicine from "Лекарства" / medicine_id and then by name.
     sched.inventory_item_id = None

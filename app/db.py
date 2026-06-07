@@ -132,6 +132,8 @@ class Schedule(Base):
     dosage_form: Mapped[str] = mapped_column(String(100), default="")
     administration_route: Mapped[str] = mapped_column(String(255), default="")
     analogs: Mapped[str] = mapped_column(Text, default="")
+    duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_unit: Mapped[str] = mapped_column(String(20), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     medicine: Mapped[Medicine] = relationship()
 
@@ -216,6 +218,8 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "schedules", "dosage_form", "VARCHAR(100) DEFAULT ''")
     await _add_column_if_missing(conn, "schedules", "administration_route", "VARCHAR(255) DEFAULT ''")
     await _add_column_if_missing(conn, "schedules", "analogs", "TEXT DEFAULT ''")
+    await _add_column_if_missing(conn, "schedules", "duration_value", "INTEGER")
+    await _add_column_if_missing(conn, "schedules", "duration_unit", "VARCHAR(20) DEFAULT ''")
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)

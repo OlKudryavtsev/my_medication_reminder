@@ -7,6 +7,7 @@ import json
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
+from dateutil.relativedelta import relativedelta
 from urllib.parse import parse_qsl
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -105,6 +106,8 @@ class AddSchedulePayload(BaseModel):
     dosage_form: str = ""
     administration_route: str = ""
     analogs: str = ""
+    duration_value: int | None = None
+    duration_unit: str = ""
     entries: list[ScheduleEntryPayload] | None = None
 
 
@@ -552,6 +555,18 @@ async def api_ai_report_draft(payload: AIReportPayload, request: Request):
 
 
 
+
+def calc_end_date_from_duration(start_date, duration_value, duration_unit):
+    if not start_date or not duration_value or duration_value <= 0:
+        return None
+    unit = (duration_unit or "days").strip()
+    if unit == "months":
+        return start_date + relativedelta(months=duration_value) - timedelta(days=1)
+    if unit == "weeks":
+        return start_date + timedelta(weeks=duration_value) - timedelta(days=1)
+    return start_date + timedelta(days=duration_value) - timedelta(days=1)
+
+
 async def serialize_schedule_row(session, r: Schedule, include_need: bool = False) -> dict:
     today = datetime.now(TZ).date()
     display_time = await schedule_due_hhmm(session, r, today)
@@ -576,6 +591,8 @@ async def serialize_schedule_row(session, r: Schedule, include_need: bool = Fals
         "dosage_form": getattr(r, "dosage_form", "") or "",
         "administration_route": getattr(r, "administration_route", "") or "",
         "analogs": getattr(r, "analogs", "") or "",
+        "duration_value": getattr(r, "duration_value", None),
+        "duration_unit": getattr(r, "duration_unit", "") or "",
         "active": bool(r.active),
     }
     if include_need:
@@ -930,6 +947,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         tg_id, role, profile_id = await require_profile_manager(request, session)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
+    if start_date and not end_date:
+        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit)
     recurrence_type, recurrence_interval_days = normalize_recurrence(payload.recurrence_type, payload.recurrence_interval_days)
     if recurrence_type not in {"daily", "weekly", "monthly", "specific_dates"}:
         raise HTTPException(status_code=400, detail="Unsupported recurrence_type")
@@ -1013,6 +1032,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 dosage_form=payload.dosage_form or "",
                 administration_route=payload.administration_route or "",
                 analogs=payload.analogs or "",
+                duration_value=payload.duration_value,
+                duration_unit=payload.duration_unit or "",
                 inventory_item_id=inv_id,
                 active=schedule_should_be_active(payload.course_id, start_date),
                 consume_units_per_dose=consume_amount,
@@ -1036,6 +1057,8 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
         tg_id, role, profile_id = await require_profile_manager(request, session)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
+    if start_date and not end_date:
+        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit)
     async with SessionLocal() as session:
         existing = (await session.execute(select(Schedule).where(Schedule.id == schedule_id, Schedule.profile_id == profile_id))).scalar_one_or_none()
         if not existing:
@@ -1063,6 +1086,8 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
             dosage_form=payload.dosage_form,
             administration_route=payload.administration_route,
             analogs=payload.analogs,
+            duration_value=payload.duration_value,
+            duration_unit=payload.duration_unit,
         )
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
@@ -1081,6 +1106,10 @@ async def api_start_schedule(schedule_id: int, request: Request):
         sched.active = True
         if not sched.start_date:
             sched.start_date = datetime.now(TZ).date()
+        if not sched.end_date:
+            computed_end = calc_end_date_from_duration(sched.start_date, getattr(sched, "duration_value", None), getattr(sched, "duration_unit", ""))
+            if computed_end:
+                sched.end_date = computed_end
         refresh_schedule_need_fields(sched)
         await log_action(session, profile_id, tg_id, "schedule_started", "schedule", sched.id, "Курс лекарства начат", commit=False)
         await session.commit()

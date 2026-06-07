@@ -1,4 +1,5 @@
 
+
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
@@ -90,6 +91,7 @@
     if(Math.abs(n - Math.round(n)) < 0.000001) return String(Math.round(n));
     return String(Math.round(n * 100) / 100).replace('.', ',');
   }
+
   window.fmtNum = fmtNum;
   function groupKey(r){return `${r.time}|${r.label||''}`}
   function groupRows(rows){
