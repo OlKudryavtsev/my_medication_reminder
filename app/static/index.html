@@ -105,6 +105,8 @@
     .scheduleMiniMeta{font-size:12px;color:var(--muted);font-weight:750;margin-top:3px;line-height:1.25}
     .scheduleMiniDetails{grid-column:1/-1;margin-top:6px;padding:8px 10px;background:var(--soft);border-radius:14px}
     @media(max-width:390px){.scheduleToolbarCompact{gap:5px}.miniSwitch button{font-size:11px;padding:6px 8px}.scheduleMiniCard{grid-template-columns:72px 1fr;padding:11px 12px}.detailRow{grid-template-columns:40% 1fr}}
+
+.historyGridWrap{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:14px;margin-top:10px}.historyGridTable{width:100%;border-collapse:separate;border-spacing:0;min-width:520px}.historyGridTable th,.historyGridTable td{font-size:12px;padding:7px;border-bottom:1px solid var(--line);vertical-align:middle}.historyGridTable th{position:sticky;top:0;background:var(--card);z-index:2;color:var(--muted);text-align:left}.historyGridTable select{min-height:34px;padding:6px 8px;border-radius:10px;font-size:12px}.historyToolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px}.historyToolbar3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.historySafety{border:1px dashed rgba(245,158,11,.45);background:rgba(245,158,11,.08);border-radius:14px;padding:9px;margin-top:10px;font-size:12px;color:var(--muted);font-weight:750}
 </style>
 </head>
 <body>
@@ -754,7 +756,7 @@
       ['Период', period]
     ];
     const details=rows.map(([k,v])=>`<div class="detailRow"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('');
-    return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="courseDetailList">${details}${analogs?`<div class="detailRow analogsRow"><span>Аналоги</span><b>${escapeHtml(analogs)}</b></div>`:''}</div>${courseNeedPanel(g)}<div class="adminActions">${inactiveActions}<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div></div>`;
+    return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="courseDetailList">${details}${analogs?`<div class="detailRow analogsRow"><span>Аналоги</span><b>${escapeHtml(analogs)}</b></div>`:''}</div>${courseNeedPanel(g)}<div class="adminActions">${inactiveActions}<button class="gray" onclick="openHistoryImport('${key}')">Внести историю</button><button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div></div>`;
   }
   function courseGroupCard(g){const key='cg_'+g.course_id+'_'+g.ids.join('_'); window.courseGroups[key]=g; return `<div class="courseMedCard">${courseCourseHeader(g,key)}${courseGroupBody(g,key)}</div>`;}
   function groupCourseItems(items){const map=new Map();(items||[]).forEach(it=>{const key=[it.course_id||'',(it.name||'').toLowerCase(),it.dose||'',it.start_date||'',it.end_date||'',it.recurrence_type||'',it.recurrence_interval_days||'',it.weekdays||'',it.specific_dates||'',it.timing_template||''].join('|');if(!map.has(key)) map.set(key,{...it, ids:[], entries:[], planned_units_total:0, remaining_need_units:0, taken_units:0, active_any:false, active_all:true});const g=map.get(key);g.ids.push(it.id); g.entries.push(it);g.planned_units_total += Number(it.planned_units_total||0);g.remaining_need_units += Number(it.remaining_need_units||0);g.taken_units += Number(it.taken_units||0);if(g.inventory_quantity==null && it.inventory_quantity!=null)g.inventory_quantity=it.inventory_quantity;g.consume_unit_name = g.consume_unit_name || it.consume_unit_name || doseParts(it.dose).unit || 'шт';g.active_any = g.active_any || !!it.active; g.active_all = g.active_all && !!it.active;g.shortage_units = Math.max(0, Number(g.remaining_need_units||0) - Number(g.inventory_quantity||0));g.duration_value = g.duration_value || it.duration_value; g.duration_unit = g.duration_unit || it.duration_unit;});return [...map.values()];}
@@ -844,6 +846,59 @@
     const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});
     root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');if(!expandedScheduleGroups.has(key)) expandedScheduleGroups.add(key);const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" data-key="${key}" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span id="scheduleTreeChev_${key}">${open?'−':'＋'}</span></div><div id="scheduleTreeBody_${key}" class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');
   }
+
+
+  function historyDefaultDates(g){
+    const today=new Date().toISOString().slice(0,10);
+    return {start:g.start_date||today,end:g.end_date&&g.end_date<today?g.end_date:today};
+  }
+  function historyStatusLabel(st){return st==='taken'?'✅ принято':st==='skipped'?'⏭️ пропущено':st==='pending'?'⏳ не принято':st==='none'?'нет события':'—'}
+  function historyImportHtml(g){
+    const d=historyDefaultDates(g);
+    return `<div class="muted" style="font-size:12px;margin-bottom:8px">Курс: <b>${escapeHtml(g.name||'')}</b> · ${escapeHtml(g.dose||'')}</div>
+      <div class="historyToolbar"><div><label>Дата с</label><input id="histStart" type="date" value="${escapeAttr(d.start)}" onchange="loadHistoryGridPreview('${g.medicine_course_id}')"></div><div><label>Дата по</label><input id="histEnd" type="date" value="${escapeAttr(d.end)}" onchange="loadHistoryGridPreview('${g.medicine_course_id}')"></div></div>
+      <div class="historyToolbar3" style="margin-top:8px"><div><label>Заполнить</label><select id="histDefault"><option value="taken">Принято</option><option value="skipped">Пропущено</option><option value="pending">Не принято</option><option value="none">Не менять</option></select></div><div><label>Если уже есть</label><select id="histOverwrite"><option value="skip_existing">Не перезаписывать</option><option value="pending_only">Перезаписать только неотмеченные</option><option value="overwrite_all">Перезаписать все</option></select></div><div><label>Аптечка</label><select id="histInventory"><option value="false">Не списывать</option><option value="true">Списывать/возвращать</option></select></div></div>
+      <div class="historySafety">Безопасность: по умолчанию существующие приемы не перезаписываются, а остатки аптечки не меняются. Для старой истории обычно оставьте “Не списывать”.</div>
+      <div style="margin-top:10px"><button class="gray" onclick="fillHistoryGridDefault()">Заполнить таблицу выбранным статусом</button></div>
+      <div id="historyGridPreview" class="muted" style="margin-top:10px">Загрузка...</div>`;
+  }
+  async function openHistoryImport(groupKey){
+    const g=window.courseGroups?.[groupKey];
+    if(!g||!g.medicine_course_id){toast('Для курса нет связанной записи');return;}
+    const prom=openModal('Внести историю приема', historyImportHtml(g), async()=>{
+      const payload=readHistoryGridPayload();
+      if(!payload || !Object.keys(payload.cells||{}).length){toast('Заполните хотя бы одну ячейку');return;}
+      try{
+        const res=await api(`/api/medicine-courses/${g.medicine_course_id}/history-grid`,{method:'POST',body:JSON.stringify(payload)});
+        closeModal(true);
+        toast(`История внесена: изменено ${res.changed||0}, создано ${res.created||0}`);
+        await loadCourses(); await loadToday(); await loadStats(); await loadAudit();
+      }catch(e){toast('Ошибка: '+(e.message||e));}
+    }, 'Применить');
+    setTimeout(()=>loadHistoryGridPreview(g.medicine_course_id),50);
+    await prom;
+  }
+  async function loadHistoryGridPreview(medicineCourseId){
+    const root=document.getElementById('historyGridPreview'); if(!root)return;
+    const s=document.getElementById('histStart')?.value; const e=document.getElementById('histEnd')?.value;
+    if(!s||!e){root.innerHTML='<div class="empty compactEmpty">Укажите период</div>';return;}
+    root.innerHTML='Загрузка...';
+    try{
+      const data=await api(`/api/medicine-courses/${medicineCourseId}/history-grid?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`);
+      window.currentHistoryGrid=data;
+      const rows=(data.days||[]).filter(d=>(d.items||[]).length);
+      if(!rows.length){root.innerHTML='<div class="empty compactEmpty">В выбранном периоде нет приемов по схеме курса</div>';return;}
+      const maxItems=Math.max(...rows.map(d=>(d.items||[]).length));
+      let html='<div class="historyGridWrap"><table class="historyGridTable"><tr><th>Дата</th>';
+      for(let i=0;i<maxItems;i++) html+=`<th>Прием ${i+1}</th>`;
+      html+='</tr>';
+      rows.forEach(day=>{html+=`<tr><td><b>${day.date}</b></td>`;for(let i=0;i<maxItems;i++){const it=(day.items||[])[i];if(!it){html+='<td></td>';continue;}const key=`${day.date}|${it.schedule_id}`;html+=`<td><div style="font-weight:800">${escapeHtml(it.time)} · ${escapeHtml(it.label||'')}</div><div class="muted" style="font-size:11px">сейчас: ${historyStatusLabel(it.status)}${it.taken_at?' '+escapeHtml(it.taken_at):''}</div><select class="histCell" data-key="${escapeAttr(key)}"><option value="none">Не менять</option><option value="taken">Принято</option><option value="skipped">Пропущено</option><option value="pending">Не принято</option></select></td>`;}html+='</tr>';});
+      html+='</table></div>';
+      root.innerHTML=html;
+    }catch(err){root.innerHTML=`<div class="empty compactEmpty">Не удалось загрузить таблицу: ${escapeHtml(err.message||String(err))}</div>`;}
+  }
+  function fillHistoryGridDefault(){const v=document.getElementById('histDefault')?.value||'taken';document.querySelectorAll('.histCell').forEach(s=>s.value=v);}
+  function readHistoryGridPayload(){const start=document.getElementById('histStart')?.value;const end=document.getElementById('histEnd')?.value;const cells={};document.querySelectorAll('.histCell').forEach(sel=>{if(sel.value&&sel.value!=='none')cells[sel.dataset.key]=sel.value;});return {start_date:start,end_date:end,cells,overwrite_mode:document.getElementById('histOverwrite')?.value||'skip_existing',apply_inventory:document.getElementById('histInventory')?.value==='true',actual_time_mode:'planned'};}
 
   async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();

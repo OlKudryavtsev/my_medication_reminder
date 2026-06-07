@@ -70,6 +70,8 @@ from .service import (
     parse_dose_amount,
     refresh_schedule_need_fields,
     schedule_stock_info,
+    schedule_applies_on_day,
+    adjust_inventory_for_event,
 )
 
 settings = get_settings()
@@ -163,6 +165,15 @@ class AITextPayload(BaseModel):
 
 class AIReportPayload(BaseModel):
     days: int = 30
+
+
+class HistoryGridPayload(BaseModel):
+    start_date: str
+    end_date: str
+    cells: dict[str, str] = {}  # key: YYYY-MM-DD|schedule_id, value: pending/taken/skipped/none
+    overwrite_mode: str = "skip_existing"  # skip_existing/pending_only/overwrite_all
+    apply_inventory: bool = False
+    actual_time_mode: str = "planned"  # planned/none
 
 
 
@@ -631,6 +642,143 @@ async def api_courses(request: Request):
                 "items": [await serialize_schedule_row(session, item, include_need=True) for item in items],
             })
         return result
+
+
+@app.get("/api/medicine-courses/{medicine_course_id}/history-grid", response_class=ORJSONResponse)
+async def api_medicine_course_history_grid(medicine_course_id: int, request: Request, start_date: str, end_date: str):
+    """Preview day-by-day historical intake grid for one medicine course."""
+    start = parse_date_or_none(start_date)
+    end = parse_date_or_none(end_date)
+    if not start or not end or end < start:
+        raise HTTPException(status_code=400, detail="Bad date range")
+    if (end - start).days > 120:
+        raise HTTPException(status_code=400, detail="Максимальный период для ввода истории — 120 дней")
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == medicine_course_id, MedicineCourse.profile_id == profile_id))).scalar_one_or_none()
+        if not mc:
+            raise HTTPException(status_code=404, detail="Medicine course not found")
+        schedules = list((await session.execute(
+            select(Schedule).options(selectinload(Schedule.medicine)).where(
+                Schedule.profile_id == profile_id,
+                Schedule.medicine_course_id == medicine_course_id,
+            ).order_by(Schedule.time_local, Schedule.id)
+        )).scalars().all())
+        days = []
+        cur = start
+        while cur <= end:
+            row = {"date": cur.isoformat(), "items": []}
+            for sched in schedules:
+                if not schedule_applies_on_day(sched, cur):
+                    continue
+                hhmm = await schedule_due_hhmm(session, sched, cur)
+                due = local_dt(cur, hhmm)
+                ev = (await session.execute(select(DoseEvent).where(DoseEvent.schedule_id == sched.id, DoseEvent.due_at == due))).scalar_one_or_none()
+                row["items"].append({
+                    "schedule_id": sched.id,
+                    "time": hhmm,
+                    "label": sched.label or hhmm,
+                    "medicine": sched.medicine.name,
+                    "dose": sched.dose,
+                    "status": ev.status if ev else "none",
+                    "taken_at": ev.taken_at.astimezone(TZ).strftime("%H:%M") if ev and ev.taken_at else "",
+                    "skipped_at": ev.skipped_at.astimezone(TZ).strftime("%H:%M") if ev and ev.skipped_at else "",
+                })
+            days.append(row)
+            cur += timedelta(days=1)
+        return {"course_id": mc.id, "name": mc.name, "dose": mc.dose, "days": days}
+
+
+@app.post("/api/medicine-courses/{medicine_course_id}/history-grid")
+async def api_apply_medicine_course_history_grid(medicine_course_id: int, payload: HistoryGridPayload, request: Request):
+    """Apply day-by-day historical intake statuses.
+
+    Safety modes:
+    - skip_existing: do not overwrite already created dose_events;
+    - pending_only: overwrite only missing/pending dose_events;
+    - overwrite_all: overwrite taken/skipped too.
+    Inventory is updated only when apply_inventory=true.
+    """
+    start = parse_date_or_none(payload.start_date)
+    end = parse_date_or_none(payload.end_date)
+    if not start or not end or end < start:
+        raise HTTPException(status_code=400, detail="Bad date range")
+    if (end - start).days > 120:
+        raise HTTPException(status_code=400, detail="Максимальный период для ввода истории — 120 дней")
+    if payload.overwrite_mode not in {"skip_existing", "pending_only", "overwrite_all"}:
+        raise HTTPException(status_code=400, detail="Bad overwrite_mode")
+    allowed_status = {"none", "pending", "taken", "skipped"}
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == medicine_course_id, MedicineCourse.profile_id == profile_id))).scalar_one_or_none()
+        if not mc:
+            raise HTTPException(status_code=404, detail="Medicine course not found")
+        schedules = list((await session.execute(
+            select(Schedule).options(selectinload(Schedule.medicine)).where(
+                Schedule.profile_id == profile_id,
+                Schedule.medicine_course_id == medicine_course_id,
+            ).order_by(Schedule.time_local, Schedule.id)
+        )).scalars().all())
+        changed = created = skipped_existing = 0
+        cur = start
+        while cur <= end:
+            for sched in schedules:
+                if not schedule_applies_on_day(sched, cur):
+                    continue
+                key = f"{cur.isoformat()}|{sched.id}"
+                status = (payload.cells or {}).get(key, "none")
+                if status not in allowed_status or status == "none":
+                    continue
+                hhmm = await schedule_due_hhmm(session, sched, cur)
+                due = local_dt(cur, hhmm)
+                ev = (await session.execute(select(DoseEvent).where(DoseEvent.schedule_id == sched.id, DoseEvent.due_at == due))).scalar_one_or_none()
+                if ev:
+                    if payload.overwrite_mode == "skip_existing":
+                        skipped_existing += 1
+                        continue
+                    if payload.overwrite_mode == "pending_only" and ev.status != "pending":
+                        skipped_existing += 1
+                        continue
+                else:
+                    ev = DoseEvent(schedule_id=sched.id, due_at=due)
+                    ev.schedule = sched
+                    session.add(ev)
+                    await session.flush()
+                    created += 1
+                prev_status = ev.status
+                if payload.apply_inventory:
+                    if prev_status == "taken" and status != "taken":
+                        await adjust_inventory_for_event(session, ev, +1)
+                    elif prev_status != "taken" and status == "taken":
+                        await adjust_inventory_for_event(session, ev, -1)
+                ev.status = status
+                if status == "taken":
+                    ev.taken_at = due if payload.actual_time_mode == "planned" else None
+                    ev.taken_by = tg_id
+                    ev.skipped_at = None
+                    ev.skipped_by = None
+                    ev.postponed_until = None
+                    ev.note = "Исторический ввод"
+                elif status == "skipped":
+                    ev.skipped_at = datetime.combine(cur, time.min, tzinfo=TZ)
+                    ev.skipped_by = tg_id
+                    ev.taken_at = None
+                    ev.taken_by = None
+                    ev.postponed_until = None
+                    ev.note = "Исторический ввод"
+                else:
+                    ev.taken_at = None
+                    ev.taken_by = None
+                    ev.skipped_at = None
+                    ev.skipped_by = None
+                    ev.postponed_until = None
+                    ev.note = "Исторический ввод"
+                changed += 1
+            cur += timedelta(days=1)
+        await log_action(session, profile_id, tg_id, "history_imported", "medicine_course", medicine_course_id, f"История приема: {start.isoformat()} — {end.isoformat()}, изменено: {changed}", commit=False)
+        await session.commit()
+        return {"ok": True, "changed": changed, "created": created, "skipped_existing": skipped_existing}
+
 
 @app.post("/api/courses")
 async def api_create_course(payload: CoursePayload, request: Request):
