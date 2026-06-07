@@ -1,4 +1,5 @@
-const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
+
+  const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
@@ -162,11 +163,10 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
     if(label) label.textContent=open?openText:closedText;
     if(chev) chev.textContent=open?'−':'＋';
   }
-  async function toggleAddMedicineForm(){
+  function toggleAddMedicineForm(){
     addMedicineOpen=!addMedicineOpen;
     document.getElementById('addMedicineForm')?.classList.toggle('hidden', !addMedicineOpen);
     setCollapseButton('addMedicineToggle', addMedicineOpen, 'Скрыть форму добавления', 'Добавить лекарство');
-    if(addMedicineOpen){await populateInventoryLinkSelect();}
   }
   function toggleAddAssignmentForm(){
     addAssignmentOpen=!addAssignmentOpen;
@@ -191,16 +191,10 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
     const sel=document.getElementById('invName'); if(!sel)return;
     const current=sel.value || '';
     let rows=[];
-    try{ rows=await api('/api/schedules'); }catch(e){ rows=[]; }
+    try{ rows=await api('/api/medicine-options'); }catch(e){ rows=[]; }
     const names=[...new Set(rows.map(r=>r.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
     sel.innerHTML='<option value="">Выберите лекарство</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
     if(current && names.includes(current)) sel.value=current;
-  }
-  async function populateInventoryLinkSelect(selectedId=''){
-    const sel=document.getElementById('inventoryLinkSelect'); if(!sel)return;
-    let rows=[]; try{rows=await api('/api/inventory-options')}catch(e){rows=[]}
-    sel.innerHTML='<option value="">Не связано</option>'+rows.map(i=>`<option value="${i.id}">${escapeHtml(i.name)} · осталось ${i.quantity} ${escapeHtml(i.unit_name||'шт')}</option>`).join('');
-    if(selectedId) sel.value=String(selectedId);
   }
   function attachmentUrl(id){return `/api/attachments/${id}?profile_id=${currentProfileId||''}`}
   function inventoryPhotoUrl(i){return `${i.photo_url}?profile_id=${currentProfileId||''}&t=${Date.now()}`}
@@ -405,14 +399,24 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
     await loadCourses();await loadSchedules();await loadToday();await loadAudit();
   }
 
+
+  function assignmentNeedHtml(courseId, rows){
+    if(!rows || !rows.length) return '<div class="needBox muted">К назначению пока не привязаны лекарства.</div>';
+    const totalShortage = rows.reduce((sum,r)=>sum+Number(r.shortage_units||0),0);
+    return `<div class="needBox"><b>Лекарства по назначению</b>${rows.map(r=>`<div class="needLine"><b>${escapeHtml(r.name)}</b>: нужно ${Number(r.planned_units_total||0)} ${escapeHtml(r.consume_unit_name||'шт')} · осталось нужно ${Number(r.remaining_need_units||0)}${r.inventory_quantity!==null&&r.inventory_quantity!==undefined?` · в аптечке ${Number(r.inventory_quantity||0)}`:''}${Number(r.shortage_units||0)>0?` · ⚠️ не хватает ${Number(r.shortage_units||0)}`:''}</div>`).join('')}${totalShortage>0?`<div class="confirmWarn">По назначению есть дефицит лекарств: ${totalShortage}</div>`:''}</div>`;
+  }
+
   async function loadCourses(){
     if(!me?.can_manage_current_profile)return;
     const rows=await api('/api/courses');
-    coursesCache=rows;
+    coursesCache = rows || [];
+    let schedRows=[]; try{ schedRows=await api('/api/schedules'); }catch(e){ schedRows=[]; }
+    const needsByCourse = {};
+    schedRows.forEach(r=>{ if(!r.course_id)return; (needsByCourse[r.course_id] ||= []).push(r); });
     const sel=document.getElementById('courseSelect');
-    if(sel) sel.innerHTML='<option value="">Без назначения</option>'+rows.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    if(sel) sel.innerHTML=courseOptionsHtml(sel.value);
     const root=document.getElementById('coursesBox');
-    root.innerHTML=`<div class="formrow aiBox"><b>Распознать назначение</b><div class="muted" style="font-size:12px;margin-top:4px">Загрузите фото назначения врача. Приложение покажет общие данные, список препаратов и действия для подтверждения.</div><div class="grid2" style="margin-top:8px"><input id="aiAssignmentFile" type="file" accept="image/*"><button class="gray" onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать назначение</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div><div id="assignmentAiPreview"></div><button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение вручную'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div><div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
+    root.innerHTML=`<div class="formrow aiBox"><b>Распознать назначение</b><div class="muted" style="font-size:12px;margin-top:4px">Загрузите фото назначения врача. Приложение покажет общие данные, список препаратов и действия для подтверждения.</div><div class="grid2" style="margin-top:8px"><input id="aiAssignmentFile" type="file" accept="image/*"><button class="gray" onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать назначение</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div><div id="assignmentAiPreview"></div><button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение вручную'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div>${assignmentNeedHtml(c.id, needsByCourse[c.id]||[])}<div class="adminActions"><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
   }
   async function addCourse(){const p={name:document.getElementById('courseName').value.trim(),assignment_date:document.getElementById('courseDate').value||null,doctor:document.getElementById('courseDoctor').value.trim(),comment:document.getElementById('courseComment').value.trim()}; if(!p.name){toast('Укажите название назначения');return} const created=await api('/api/courses',{method:'POST',body:JSON.stringify(p)}); const file=document.getElementById('courseFile').files[0]; if(file){await uploadFileToCourse(created.id,file)} toast('Назначение добавлено'); addAssignmentOpen=false; await loadCourses(); await loadAudit()}
   async function editCourse(id,name,assignmentDate,doctor,comment){const body=`<label>Название</label><input id="cName" value="${name}"><label>Дата назначения</label><input id="cDate" type="date" value="${assignmentDate}"><label>Врач</label><input id="cDoctor" value="${doctor}"><label>Комментарий</label><input id="cComment" value="${comment}">`; const ok=await openModal('Изменить назначение', body, ()=>closeModal({name:document.getElementById('cName').value.trim(),assignment_date:document.getElementById('cDate').value||null,doctor:document.getElementById('cDoctor').value.trim(),comment:document.getElementById('cComment').value.trim()})); if(!ok)return; await api('/api/courses/'+id,{method:'PUT',body:JSON.stringify(ok)}); toast('Назначение обновлено'); await loadCourses(); await loadAudit()}
@@ -421,12 +425,28 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   async function uploadCourseFile(id){const el=document.getElementById('courseFile_'+id);if(!el?.files?.[0])return;await uploadFileToCourse(id,el.files[0]);toast('Файл добавлен');await loadCourses();await loadAudit()}
   const editSchedules = new Set();
   const scheduleDrafts = new Map();
-  let coursesCache=[];
-  let inventoryCache=[];
-  function fmtNum(v){if(v===null||v===undefined||v==='')return '—'; const n=Number(v); if(!Number.isFinite(n))return String(v); return Number.isInteger(n)?String(n):String(Math.round(n*10)/10)}
-  function courseOptionsHtml(selected=''){return (coursesCache||[]).map(c=>`<option value="${c.id}" ${String(selected)===String(c.id)?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
-  function inventoryOptionsHtml(selected=''){return (inventoryCache||[]).map(i=>`<option value="${i.id}" ${String(selected)===String(i.id)?'selected':''}>${escapeHtml(i.name)} · ${i.quantity} ${escapeHtml(i.unit_name||'шт')}</option>`).join('')}
-
+  let coursesCache = [];
+  function courseNameById(id){
+    if(!id) return 'Без назначения';
+    const c=(coursesCache||[]).find(x=>String(x.id)===String(id));
+    return c ? (c.name || ('Назначение #' + id)) : ('Назначение #' + id);
+  }
+  function courseOptionsHtml(selected){
+    return '<option value="">Без назначения</option>' + (coursesCache||[]).map(c=>`<option value="${c.id}" ${String(selected||'')===String(c.id)?'selected':''}>${escapeHtml(c.name)}</option>`).join('');
+  }
+  function stockLine(r){
+    const unit = r.consume_unit_name || 'шт';
+    const planned = Number(r.planned_units_total || 0);
+    if(!planned) return '<div class="needLine muted">Потребность на курс пока не рассчитана: проверьте даты начала/окончания и дозу.</div>';
+    const parts = [`нужно на курс: ${planned} ${escapeHtml(unit)}`];
+    parts.push(`уже принято: ${Number(r.taken_units||0)} ${escapeHtml(unit)}`);
+    parts.push(`осталось нужно: ${Number(r.remaining_need_units||0)} ${escapeHtml(unit)}`);
+    if(r.inventory_quantity !== null && r.inventory_quantity !== undefined){
+      parts.push(`в аптечке: ${Number(r.inventory_quantity||0)} ${escapeHtml(unit)}`);
+      if(Number(r.shortage_units||0) > 0) parts.push(`⚠️ не хватает: ${Number(r.shortage_units||0)} ${escapeHtml(unit)}`);
+    }
+    return `<div class="needLine">${parts.join(' · ')}</div>`;
+  }
   function fieldHtml(id, value, editable, type='text'){
     const safe = escapeHtml(value || '');
     if(editable) return `<input id="${id}" ${type!=='text'?`type="${type}"`:''} value="${safe}">`;
@@ -434,22 +454,27 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   }
   function scheduleForm(r){
     const edit=editSchedules.has(r.id);
+    const courseLabel = courseNameById(r.course_id);
+    const courseControl = edit
+      ? `<select id="s_course_${r.id}">${courseOptionsHtml(r.course_id)}</select>`
+      : `<div id="s_course_${r.id}" class="valueBox ${r.course_id?'':'isEmpty'}" data-value="${r.course_id||''}">${escapeHtml(courseLabel)}</div>`;
     return `<div class="formrow" id="sched_${r.id}">
       <div class="schedTop">
         <div><label>Лекарство</label>${fieldHtml('s_name_'+r.id, r.name, edit)}</div>
         <div><label>Доза</label>${fieldHtml('s_dose_'+r.id, r.dose, edit)}</div>
         <div><label>Время</label>${fieldHtml('s_time_'+r.id, edit ? r.time_local : (r.display_time || r.time_local), edit, 'time')}</div>
       </div>
+      <div class="schedComment"><label>Назначение</label>${courseControl}</div>
       <div class="schedComment"><label>Комментарий</label>${fieldHtml('s_label_'+r.id, r.label, edit)}</div>
       <div class="schedDates"><div><label>Дата начала</label>${fieldHtml('s_start_'+r.id, r.start_date || '', edit, 'date')}</div><div><label>Дата окончания</label>${fieldHtml('s_end_'+r.id, r.end_date || '', edit, 'date')}</div></div>
-      ${edit?`<div class="fieldLine"><label>Назначение</label><select id="s_course_${r.id}"><option value="">Без назначения</option>${courseOptionsHtml(r.course_id||'')}</select></div><div class="fieldLine"><label>Аптечка</label><select id="s_inventory_${r.id}"><option value="">Не связано</option>${inventoryOptionsHtml(r.inventory_item_id||'')}</select></div><div class="dateLine"><div><label>Списывать</label><input id="s_consume_${r.id}" type="number" min="0" step="0.1" value="${r.consume_units_per_dose||1}"></div><div><label>Ед.</label><input id="s_consume_unit_${r.id}" value="${escapeAttr(r.consume_unit_name||'шт')}"></div></div>`:`<div class="meta">${r.course_id?'Назначение привязано · ':''}${r.inventory_item_id?'Аптечка: '+escapeHtml(r.inventory_item_name||'связано')+' · ':''}нужно: ${fmtNum(r.planned_units_total)} ${escapeHtml(r.consume_unit_name||'шт')} · осталось нужно: ${fmtNum(r.remaining_need_units)}${r.inventory_quantity!=null?' · в аптечке: '+fmtNum(r.inventory_quantity):''}${r.shortage_units>0?' · ⚠️ не хватает '+fmtNum(r.shortage_units):''}</div>`}
+      <div class="needBox"><b>Потребность по курсу</b>${stockLine(r)}</div>
       <div class="adminActions">${edit?`<button onclick="saveSchedule(${r.id})">Сохранить</button><button class="gray" onclick="cancelScheduleEdit(${r.id})">Отменить</button>`:`<button class="blue" onclick="enableScheduleEdit(${r.id})">Изменить</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button>`}</div>
     </div>`
   }
-  async function enableScheduleEdit(id){editSchedules.add(id);await populateInventoryLinkSelect();await loadCourses();await loadSchedules()}
+  function enableScheduleEdit(id){editSchedules.add(id);loadSchedules()}
   function cancelScheduleEdit(id){editSchedules.delete(id);scheduleDrafts.delete(id);loadSchedules()}
-  async function loadSchedules(){if(!me?.can_manage_current_profile)return;try{inventoryCache=await api('/api/inventory-options')}catch(e){inventoryCache=[]}let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
-  function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null,course_id:document.getElementById('s_course_'+id)?.value?Number(document.getElementById('s_course_'+id).value):null,inventory_item_id:document.getElementById('s_inventory_'+id)?.value?Number(document.getElementById('s_inventory_'+id).value):null,consume_units_per_dose:Number(document.getElementById('s_consume_'+id)?.value||1),consume_unit_name:document.getElementById('s_consume_unit_'+id)?.value||'шт'}}
+  async function loadSchedules(){if(!me?.can_manage_current_profile)return;if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Расписание пустое</div>'}
+  function readSchedule(id){const c=document.getElementById('s_course_'+id);return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),course_id:c&&c.value?Number(c.value):null,start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null}}
   async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);scheduleDrafts.delete(id);toast('Расписание обновлено');loadSchedules();loadToday();loadAudit()}
   function parseFrequency(){const [type,interval,count]=document.getElementById('frequency').value.split(':');return {recurrence_type:type, recurrence_interval_days:Number(interval), count:Number(count)}}
   function mealForIndex(i){return ['breakfast','lunch','dinner'][i] || 'breakfast'}
@@ -473,7 +498,7 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
       if(time && !seen.has(key)){seen.add(key);entries.push({time_local:time,label:label||time,timing_template:timingTemplate,meal_name:meal,meal_offset_minutes:offset})}
     }
     const weekdays=[...document.getElementById('weekdays').selectedOptions].map(o=>o.value).join(',');
-    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),course_id:document.getElementById('courseSelect').value?Number(document.getElementById('courseSelect').value):null,inventory_item_id:document.getElementById('inventoryLinkSelect')?.value?Number(document.getElementById('inventoryLinkSelect').value):null,consume_units_per_dose:Number(document.getElementById('consumeUnits')?.value||1),consume_unit_name:document.getElementById('consumeUnitName')?.value||'шт',start_date:document.getElementById('medStart').value||null,end_date:document.getElementById('medEnd').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,weekdays,specific_dates:'',entries};
+    const payload={name:document.getElementById('name').value.trim(),dose:document.getElementById('dose').value.trim(),course_id:document.getElementById('courseSelect').value?Number(document.getElementById('courseSelect').value):null,start_date:document.getElementById('medStart').value||null,end_date:document.getElementById('medEnd').value||null,recurrence_type:f.recurrence_type,recurrence_interval_days:f.recurrence_interval_days,weekdays,specific_dates:'',entries};
     if(!payload.name||!payload.dose||!entries.length){toast('Заполните лекарство, дозу и хотя бы одно время');return}
     addScheduleInProgress=true;
     try{
@@ -522,5 +547,140 @@ const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');const report=`<div class="formrow" style="margin-bottom:12px"><b>ИИ-черновик отчета для врача</b><div class="fieldLine"><label>Период</label><select id="aiReportDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></div><button class="wide gray" onclick="aiDoctorReportDraft()" ${aiEnabled?'':'disabled'}>Подготовить черновик</button>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div>`;if(!rows.length){root.innerHTML=report+'<div class="empty">Статистики пока нет</div>';return}root.innerHTML=report+`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
   async function loadHistory(){const id=document.getElementById('medicineSelect').value;const root=document.getElementById('history');if(!id){root.textContent='Выберите препарат';return}const rows=await api(`/api/medicines/${id}/history`);if(!rows.length){root.innerHTML='<div class="empty">Истории пока нет</div>';return}root.innerHTML=`<div class="tableWrap"><table class="miniTable historyTable"><tr><th>Дата</th><th>План</th><th>Статус</th></tr>${rows.map(r=>`<tr><td>${r.date}</td><td>${r.due_time}<br>${escapeHtml(r.dose)}</td><td>${r.status==='taken'?'✅ '+(r.taken_at||''):r.status==='skipped'?'⏭️ '+(r.skipped_at||''):'⏳'}</td></tr>`).join('')}</table></div>`}
+
+
+  // ===== v30: назначения -> курсы лекарств -> расписание =====
+  function renderFrequencySlots(){ const root=document.getElementById('frequencySlots'); if(!root) return; }
+  function freqFromValue(value){const [type,interval,count]=(value||'daily:1:1').split(':');return {recurrence_type:type||'daily',recurrence_interval_days:Number(interval||1),count:Number(count||1)} }
+  function mealNameRu(meal){return {breakfast:'завтрак',lunch:'обед',dinner:'ужин'}[meal]||'еда'}
+  function templateText(t, meal){const m=mealNameRu(meal); return t==='before_meal'?`за 30 мин до: ${m}`:t==='with_meal'?`во время: ${m}`:t==='after_meal'?`после: ${m}`:''}
+  function courseNeedLine(item){
+    const unit=escapeHtml(item.consume_unit_name||'шт');
+    const need=fmtNum(item.planned_units_total||0);
+    const left=fmtNum(item.remaining_need_units||0);
+    const stock=item.inventory_quantity==null?'—':fmtNum(item.inventory_quantity);
+    const shortage=Number(item.shortage_units||0);
+    const ok = item.inventory_quantity==null ? 'аптечка не заполнена' : (shortage>0?`⚠️ не хватает ${fmtNum(shortage)} ${unit}`:`✅ хватает`);
+    return `нужно на курс: ${need} ${unit} · осталось нужно: ${left} ${unit} · в аптечке: ${stock} ${unit} · ${ok}`;
+  }
+  function courseItemSummary(item){
+    const status=item.active?'🟢 активен':'⚪ не начат';
+    const period=`${item.start_date||'—'} — ${item.end_date||'—'}`;
+    const time=item.display_time||item.time_local||'—';
+    return `${status} · ${time} · ${period}`;
+  }
+  function courseItemCard(item){
+    const inactiveActions = item.active ? '' : `<button onclick="startSchedule(${item.id})">Начать курс</button>`;
+    return `<div class="courseMedCard"><div class="med">${escapeHtml(item.name)} — ${escapeHtml(item.dose||'')}</div><div class="meta">${escapeHtml(courseItemSummary(item))}</div><div class="meta">${escapeHtml(item.label||'')}</div><div class="meta needLine">${courseNeedLine(item)}</div><div class="adminActions">${inactiveActions}<button class="gray" onclick="openCourseMedicineForm(${item.course_id}, ${item.id})">Изменить</button><button class="danger" onclick="deleteSchedule(${item.id})">Удалить</button></div></div>`;
+  }
+  function courseItemsBlock(course){
+    const items=course.items||[];
+    return `<div class="courseItems"><div class="courseItemsTitle">Курсы лекарств</div>${items.length?items.map(courseItemCard).join(''):'<div class="empty compactEmpty">Курсов лекарств пока нет</div>'}</div>`;
+  }
+  async function loadCourses(){
+    const rows=await api('/api/courses');
+    coursesCache=rows;
+    const root=document.getElementById('coursesBox');
+    root.innerHTML=`<div class="formrow aiBox"><b>Распознать назначение</b><div class="muted" style="font-size:12px;margin-top:4px">Загрузите фото назначения врача. Приложение покажет общие данные, список препаратов и действия для подтверждения.</div><div class="grid2" style="margin-top:8px"><input id="aiAssignmentFile" type="file" accept="image/*"><button class="gray" onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать назначение</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div><div id="assignmentAiPreview"></div><button id="courseAddToggle" class="collapseToggle" onclick="toggleAddAssignmentForm()"><span>${addAssignmentOpen?'Скрыть форму добавления':'Добавить назначение вручную'}</span><span class="chev">${addAssignmentOpen?'−':'＋'}</span></button><div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div><div class="adminList" style="margin-top:14px">${rows.length?rows.map(c=>`<div class="formrow assignmentCard"><b>${escapeHtml(c.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">Дата назначения: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}</div>${c.comment?`<div class="muted" style="font-size:12px;margin-top:3px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div>${courseItemsBlock(c)}<div class="adminActions"><button onclick="openCourseMedicineForm(${c.id})">Добавить курс лекарства</button><button class="gray" onclick="aiAddMedicineToCourse(${c.id})" ${aiEnabled?'':'disabled'}>ИИ из текста</button><button class="gray" onclick="editCourse(${c.id}, '${escapeAttr(c.name)}', '${c.assignment_date||''}', '${escapeAttr(c.doctor||'')}', '${escapeAttr(c.comment||'')}')">Изменить назначение</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить назначение</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div></div>`).join(''):'<div class="empty">Назначений пока нет</div>'}</div>`;
+  }
+  function courseMedicineModalHtml(courseId, item={}){
+    const title = item.id ? 'Изменить курс лекарства' : 'Добавить курс лекарства';
+    return `<div class="fieldLine"><label>Лекарство</label><input id="cm_name" value="${escapeAttr(item.name||'')}" placeholder="Например, Панкреатин"></div><div class="fieldLine"><label>Доза</label><input id="cm_dose" value="${escapeAttr(item.dose||'')}" placeholder="1 капс"></div><div class="dateLine"><div><label>Дата начала</label><input id="cm_start" type="date" value="${escapeAttr(item.start_date||'')}"></div><div><label>Дата окончания</label><input id="cm_end" type="date" value="${escapeAttr(item.end_date||'')}"></div></div><div class="fieldLine"><label>Шаблон</label><select id="cm_template" onchange="renderCourseMedicineSlots()"><option value="fixed">Фиксированное время</option><option value="before_meal">За 30 мин до еды</option><option value="with_meal">Во время еды</option><option value="after_meal">После еды</option></select></div><div class="fieldLine"><label>Периодичность</label><select id="cm_frequency" onchange="renderCourseMedicineSlots()"><option value="daily:1:1">1 раз в день</option><option value="daily:1:2">2 раза в день</option><option value="daily:1:3">3 раза в день</option><option value="weekly:7:1">1 раз в неделю</option><option value="weekly:14:1">1 раз в 2 недели</option><option value="monthly:30:1">1 раз в месяц</option><option value="daily:2:1">1 раз в 2 дня</option><option value="daily:3:1">1 раз в 3 дня</option></select></div><div class="fieldLine"><label>Дни недели</label><select id="cm_weekdays" multiple size="3"><option value="0">Пн</option><option value="1">Вт</option><option value="2">Ср</option><option value="3">Чт</option><option value="4">Пт</option><option value="5">Сб</option><option value="6">Вс</option></select></div><div id="cm_slots" class="frequencySlots"></div><div class="muted" style="font-size:12px;margin-top:8px">Если дата начала сегодня или раньше, курс автоматически попадет в расписание. Если дата начала не указана или в будущем — нажмите «Начать курс» позже.</div>`;
+  }
+  function renderCourseMedicineSlots(item={}){
+    const root=document.getElementById('cm_slots'); if(!root)return;
+    const f=freqFromValue(document.getElementById('cm_frequency')?.value);
+    const t=document.getElementById('cm_template')?.value||'fixed';
+    const defaults=['09:00','15:00','21:00'];
+    root.innerHTML=Array.from({length:f.count},(_,i)=>{const meal=mealForIndex(i); const controls=t==='fixed'?`<div class="slotRow"><label>Время</label><input id="cm_time${i}" type="time" value="${item.time_local||defaults[i]||'09:00'}"></div><div class="slotRow"><label>Комментарий</label><input id="cm_label${i}" placeholder="например, после еды" value="${escapeAttr(item.label||'')}"></div>`:`<div class="slotRow"><label>Еда</label><select id="cm_meal${i}"><option value="breakfast" ${meal==='breakfast'?'selected':''}>Завтрак</option><option value="lunch" ${meal==='lunch'?'selected':''}>Обед</option><option value="dinner" ${meal==='dinner'?'selected':''}>Ужин</option></select></div><div class="slotRow"><label>Комментарий</label><input id="cm_label${i}" placeholder="${templateLabel(t,meal)}" value="${escapeAttr(item.label||'')}"></div>`; return `<div class="slotGroup"><div class="slotGroupTitle">Прием ${i+1}</div>${controls}</div>`}).join('');
+  }
+  function readCourseMedicinePayload(courseId){
+    const f=freqFromValue(document.getElementById('cm_frequency')?.value);
+    const timingTemplate=document.getElementById('cm_template')?.value||'fixed';
+    const entries=[]; const seen=new Set();
+    for(let i=0;i<f.count;i++){
+      const mealEl=document.getElementById('cm_meal'+i); const meal=mealEl?mealEl.value:'';
+      const offset=timingTemplate==='before_meal'?-30:(timingTemplate==='after_meal'?10:0);
+      const time=timingTemplate==='fixed'?document.getElementById('cm_time'+i)?.value:({breakfast:'08:00',lunch:'13:30',dinner:'19:30'}[meal]||'09:00');
+      const label=(document.getElementById('cm_label'+i)?.value.trim() || (timingTemplate==='fixed'?time:templateLabel(timingTemplate,meal)));
+      const key=`${time}|${label}|${timingTemplate}|${meal}|${offset}`;
+      if(time && !seen.has(key)){seen.add(key); entries.push({time_local:time,label:label||time,timing_template:timingTemplate,meal_name:meal,meal_offset_minutes:offset});}
+    }
+    const weekdays=[...document.getElementById('cm_weekdays').selectedOptions].map(o=>o.value).join(',');
+    return {name:document.getElementById('cm_name').value.trim(), dose:document.getElementById('cm_dose').value.trim(), course_id:courseId, start_date:document.getElementById('cm_start').value||null, end_date:document.getElementById('cm_end').value||null, recurrence_type:f.recurrence_type, recurrence_interval_days:f.recurrence_interval_days, weekdays, specific_dates:'', entries};
+  }
+  async function openCourseMedicineForm(courseId, itemId=null, draft=null){
+    const course=(coursesCache||[]).find(c=>Number(c.id)===Number(courseId));
+    let item=draft||{};
+    if(itemId && course) item=(course.items||[]).find(x=>Number(x.id)===Number(itemId))||{};
+    const body=courseMedicineModalHtml(courseId,item);
+    setTimeout(()=>{ if(item.timing_template)document.getElementById('cm_template').value=item.timing_template; if(item.recurrence_type){document.getElementById('cm_frequency').value=`${item.recurrence_type}:${item.recurrence_interval_days||1}:1`;} renderCourseMedicineSlots(item); },0);
+    const ok=await openModal(itemId?'Изменить курс лекарства':'Добавить курс лекарства', body, ()=>closeModal(readCourseMedicinePayload(courseId)), itemId?'Сохранить':'Добавить');
+    if(!ok)return; if(!ok.name||!ok.dose||!ok.entries.length){toast('Заполните лекарство, дозу и схему приема');return}
+    if(!itemId && course && (course.items||[]).some(x=>(x.name||'').toLowerCase()===ok.name.toLowerCase())){toast('В этом назначении это лекарство уже есть');return}
+    if(itemId) await api('/api/schedules/'+itemId,{method:'PUT',body:JSON.stringify({...ok,time_local:ok.entries[0].time_local,label:ok.entries[0].label})});
+    else await api('/api/schedules',{method:'POST',body:JSON.stringify(ok)});
+    toast(itemId?'Курс обновлен':'Курс лекарства добавлен'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit();
+  }
+  async function aiAddMedicineToCourse(courseId){
+    const body='<label>Опишите курс лекарства</label><textarea id="aiCourseMedText" placeholder="Например: Панкреатин 1 капсула во время еды 3 раза в день с 10 по 20 июня"></textarea>';
+    const text=await openModal('ИИ-помощник', body, ()=>closeModal(document.getElementById('aiCourseMedText').value.trim()), 'Распознать');
+    if(!text)return; const res=await api('/api/ai/parse-medicine',{method:'POST',body:JSON.stringify({text})}); const meds=res.medicines||[]; if(!meds.length){toast('Не удалось распознать');return}
+    const m=meds[0]; const draft={name:m.name||'',dose:m.dose||'',start_date:m.start_date||'',end_date:m.end_date||'',timing_template:m.timing_template||'fixed',label:m.comment||''};
+    await openCourseMedicineForm(courseId,null,draft);
+  }
+  async function startSchedule(id){ await api('/api/schedules/'+id+'/start',{method:'POST'}); toast('Курс начат'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit(); }
+  function scheduleForm(r){
+    const edit=editSchedules.has(r.id);
+    if(edit) return `<div class="scheduleCard"><div class="scheduleGrid"><input id="s_name_${r.id}" value="${escapeAttr(r.name)}"><input id="s_dose_${r.id}" value="${escapeAttr(r.dose||'')}"><input id="s_time_${r.id}" type="time" value="${r.time_local}"></div><input id="s_label_${r.id}" value="${escapeAttr(r.label||'')}" placeholder="Комментарий"><div class="dateLine"><div><label>Дата начала</label><input id="s_start_${r.id}" type="date" value="${r.start_date||''}"></div><div><label>Дата окончания</label><input id="s_end_${r.id}" type="date" value="${r.end_date||''}"></div></div><div class="adminActions"><button onclick="saveSchedule(${r.id})">Сохранить</button><button class="gray" onclick="cancelScheduleEdit(${r.id})">Отменить</button></div></div>`;
+    return `<div class="scheduleCard"><div class="scheduleGrid"><div><b>${escapeHtml(r.name)}</b></div><div>${escapeHtml(r.dose||'')}</div><div>${escapeHtml(r.display_time||r.time_local)}</div></div>${r.label?`<div class="meta">${escapeHtml(r.label)}</div>`:''}<div class="meta">${r.start_date||'—'} — ${r.end_date||'—'}${r.course_id?' · из назначения':''}</div><div class="adminActions"><button class="gray" onclick="editSchedules.add(${r.id});loadSchedules()">Изменить</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button></div></div>`;
+  }
+  async function loadSchedules(){if(!me?.can_manage_current_profile)return;let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');root.innerHTML=rows.length?`<div class="adminList">${rows.map(scheduleForm).join('')}</div>`:'<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>'}
+  function readSchedule(id){return {name:document.getElementById('s_name_'+id).value.trim(),dose:document.getElementById('s_dose_'+id).value.trim(),time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),start_date:document.getElementById('s_start_'+id).value||null,end_date:document.getElementById('s_end_'+id).value||null,entries:[{time_local:document.getElementById('s_time_'+id).value,label:document.getElementById('s_label_'+id).value.trim(),timing_template:'fixed',meal_name:'',meal_offset_minutes:0}]}}
+  async function saveSchedule(id){const p=readSchedule(id);if(!p.name||!p.dose||!p.time_local){toast('Заполните лекарство, дозу и время');return}await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify(p)});editSchedules.delete(id);toast('Расписание обновлено');loadSchedules();loadCourses();loadToday();loadAudit()}
+  function actionLabel(a){return {event_taken:'Принято',event_time_changed:'Изменено время',event_status_changed:'Изменен статус',event_skipped:'Пропуск',event_snoozed:'Отложено',schedule_created:'Добавлен курс лекарства',schedule_updated:'Изменен курс/расписание',schedule_started:'Курс начат',schedule_deleted:'Удалено расписание',profile_created:'Создан профиль',profile_renamed:'Переименован профиль',profile_deleted:'Удален профиль',course_created:'Создано назначение',course_updated:'Изменено назначение',course_deleted:'Удалено назначение',assignment_file_added:'Добавлен файл',inventory_created:'Аптечка: добавлено',inventory_updated:'Аптечка: обновлено',inventory_deleted:'Аптечка: удалено',inventory_photo_added:'Аптечка: фото'}[a]||a}
+
+
+
+  // v30.1 grouping inside assignment: one medicine = one course, multiple times inside it.
+  function groupCourseItems(items){
+    const map=new Map();
+    (items||[]).forEach(it=>{
+      const key=[it.name||'',it.dose||'',it.start_date||'',it.end_date||'',it.recurrence_type||'',it.recurrence_interval_days||'',it.weekdays||'',it.specific_dates||''].join('|');
+      if(!map.has(key)) map.set(key,{...it, ids:[], times:[], planned_units_total:0, remaining_need_units:0, taken_units:0, active_any:false, active_all:true});
+      const g=map.get(key);
+      g.ids.push(it.id);
+      g.times.push(it.display_time||it.time_local||'—');
+      g.planned_units_total += Number(it.planned_units_total||0);
+      g.remaining_need_units += Number(it.remaining_need_units||0);
+      g.taken_units += Number(it.taken_units||0);
+      g.inventory_quantity = it.inventory_quantity==null ? g.inventory_quantity : it.inventory_quantity;
+      g.consume_unit_name = g.consume_unit_name || it.consume_unit_name || 'шт';
+      g.active_any = g.active_any || !!it.active;
+      g.active_all = g.active_all && !!it.active;
+      g.shortage_units = Math.max(0, Number(g.remaining_need_units||0) - Number(g.inventory_quantity||0));
+    });
+    return [...map.values()];
+  }
+  function courseGroupNeedLine(g){
+    const unit=escapeHtml(g.consume_unit_name||'шт');
+    const stock=g.inventory_quantity==null?'—':fmtNum(g.inventory_quantity);
+    const shortage=Number(g.shortage_units||0);
+    const ok=g.inventory_quantity==null?'аптечка не заполнена':(shortage>0?`⚠️ не хватает ${fmtNum(shortage)} ${unit}`:'✅ хватает');
+    return `нужно на курс: ${fmtNum(g.planned_units_total||0)} ${unit} · осталось нужно: ${fmtNum(g.remaining_need_units||0)} ${unit} · в аптечке: ${stock} ${unit} · ${ok}`;
+  }
+  function courseGroupCard(g){
+    const status=g.active_all?'🟢 активен':(g.active_any?'🟡 частично активен':'⚪ не начат');
+    const period=`${g.start_date||'—'} — ${g.end_date||'—'}`;
+    const inactiveActions = g.active_all ? '' : `<button onclick="startScheduleGroup('${g.ids.join(',')}')">Начать курс</button>`;
+    return `<div class="courseMedCard"><div class="med">${escapeHtml(g.name)} — ${escapeHtml(g.dose||'')}</div><div class="meta">${status} · ${[...new Set(g.times)].join(', ')} · ${period}</div>${g.label?`<div class="meta">${escapeHtml(g.label)}</div>`:''}<div class="meta needLine">${courseGroupNeedLine(g)}</div><div class="adminActions">${inactiveActions}<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, ${g.ids[0]})">Изменить</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div></div>`;
+  }
+  function courseItemsBlock(course){
+    const groups=groupCourseItems(course.items||[]);
+    return `<div class="courseItems"><div class="courseItemsTitle">Курсы лекарств</div>${groups.length?groups.map(courseGroupCard).join(''):'<div class="empty compactEmpty">Курсов лекарств пока нет</div>'}</div>`;
+  }
+  async function startScheduleGroup(idsCsv){const ids=idsCsv.split(',').map(Number).filter(Boolean); for(const id of ids){await api('/api/schedules/'+id+'/start',{method:'POST'});} toast('Курс начат'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit();}
+  async function deleteScheduleGroup(idsCsv){const ok=await confirmAction('Удалить курс лекарства?', 'Будут удалены все приемы этого лекарства в назначении.'); if(!ok)return; const ids=idsCsv.split(',').map(Number).filter(Boolean); for(const id of ids){await api('/api/schedules/'+id,{method:'DELETE'});} toast('Курс лекарства удален'); await loadCourses(); await loadSchedules(); await loadToday(); await loadAudit();}
+
   async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();

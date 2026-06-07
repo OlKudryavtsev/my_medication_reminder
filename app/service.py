@@ -220,7 +220,7 @@ async def deactivate_course(session: AsyncSession, profile_id: int, course_id: i
         return None
     c.active = False
     if disable_schedules:
-        rows = (await session.execute(select(Schedule).where(Schedule.course_id == course_id, Schedule.profile_id == profile_id, Schedule.active == True))).scalars().all()
+        rows = (await session.execute(select(Schedule).where(Schedule.course_id == course_id, Schedule.profile_id == profile_id))).scalars().all()
         for r in rows:
             r.active = False
     await log_action(session, profile_id, actor_tg_id, "course_deleted", "course", c.id, f"Удалено назначение: {c.name}")
@@ -870,7 +870,13 @@ async def update_schedule(
     # by the selected medicine from "Лекарства" / medicine_id and then by name.
     sched.inventory_item_id = None
     refresh_schedule_need_fields(sched)
-    sched.active = True
+    # A schedule that belongs to an assignment is a course row. It becomes active
+    # automatically only when its start date is today/past; otherwise it is started
+    # manually by the "Начать курс" action.
+    if course_id:
+        sched.active = bool(start_date and start_date <= datetime.now(TZ).date())
+    else:
+        sched.active = True
 
     # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.
     now = datetime.now(TZ)

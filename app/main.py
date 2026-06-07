@@ -539,6 +539,42 @@ async def api_ai_report_draft(payload: AIReportPayload, request: Request):
     return result
 
 
+
+async def serialize_schedule_row(session, r: Schedule, include_need: bool = False) -> dict:
+    today = datetime.now(TZ).date()
+    display_time = await schedule_due_hhmm(session, r, today)
+    stock = await schedule_stock_info(session, r)
+    data = {
+        "id": r.id,
+        "name": r.medicine.name,
+        "dose": r.dose,
+        "time_local": r.time_local,
+        "display_time": display_time,
+        "label": r.label,
+        "start_date": r.start_date.isoformat() if r.start_date else "",
+        "end_date": r.end_date.isoformat() if r.end_date else "",
+        "recurrence_type": r.recurrence_type or "daily",
+        "recurrence_interval_days": r.recurrence_interval_days or 1,
+        "course_id": r.course_id,
+        "weekdays": r.weekdays or "",
+        "specific_dates": r.specific_dates or "",
+        "timing_template": r.timing_template or "fixed",
+        "meal_name": r.meal_name or "",
+        "meal_offset_minutes": r.meal_offset_minutes or 0,
+        "active": bool(r.active),
+    }
+    if include_need:
+        data.update({
+            "planned_doses_count": stock.get("planned_doses_count", 0),
+            "planned_units_total": stock.get("planned_units_total", 0),
+            "taken_units": stock.get("taken_units", 0),
+            "remaining_need_units": stock.get("remaining_need_units", 0),
+            "inventory_quantity": stock.get("inventory_quantity"),
+            "shortage_units": stock.get("shortage_units"),
+            "consume_unit_name": stock.get("consume_unit_name") or "шт",
+        })
+    return data
+
 @app.get("/api/courses", response_class=ORJSONResponse)
 async def api_courses(request: Request):
     async with SessionLocal() as session:
@@ -547,6 +583,11 @@ async def api_courses(request: Request):
         result = []
         for c in rows:
             attachments = (await session.execute(select(TreatmentAttachment).where(TreatmentAttachment.course_id == c.id).order_by(TreatmentAttachment.id.desc()))).scalars().all()
+            items_q = select(Schedule).options(selectinload(Schedule.medicine)).where(
+                Schedule.profile_id == profile_id,
+                Schedule.course_id == c.id,
+            ).order_by(Schedule.active.desc(), Schedule.time_local, Schedule.id)
+            items = (await session.execute(items_q)).scalars().all()
             result.append({
                 "id": c.id,
                 "name": c.name,
@@ -554,9 +595,9 @@ async def api_courses(request: Request):
                 "doctor": c.doctor or "",
                 "comment": c.comment or "",
                 "attachments": [{"id": a.id, "filename": a.filename, "content_type": a.content_type} for a in attachments],
+                "items": [await serialize_schedule_row(session, item, include_need=True) for item in items],
             })
         return result
-
 
 @app.post("/api/courses")
 async def api_create_course(payload: CoursePayload, request: Request):
@@ -856,43 +897,17 @@ async def api_schedules(request: Request):
         rows = (await session.execute(
             select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.active == True, Schedule.profile_id == profile_id).order_by(Schedule.time_local)  # noqa: E712
         )).scalars().all()
-        today = datetime.now(TZ).date()
-        result = []
-        for r in rows:
-            display_time = await schedule_due_hhmm(session, r, today)
-            stock = await schedule_stock_info(session, r)
-            result.append({
-                "id": r.id,
-                "name": r.medicine.name,
-                "dose": r.dose,
-                "time_local": r.time_local,
-                "display_time": display_time,
-                "label": r.label,
-                "start_date": r.start_date.isoformat() if r.start_date else "",
-                "end_date": r.end_date.isoformat() if r.end_date else "",
-                "recurrence_type": r.recurrence_type or "daily",
-                "recurrence_interval_days": r.recurrence_interval_days or 1,
-                "course_id": r.course_id,
-                "inventory_item_id": r.inventory_item_id or stock.get("inventory_item_id"),
-                "inventory_item_name": stock.get("inventory_item_name", ""),
-                "consume_units_per_dose": float(r.consume_units_per_dose or stock.get("consume_units_per_dose") or 1),
-                "consume_unit_name": r.consume_unit_name or stock.get("consume_unit_name") or "шт",
-                "planned_doses_count": stock.get("planned_doses_count", 0),
-                "planned_units_total": stock.get("planned_units_total", 0),
-                "taken_units": stock.get("taken_units", 0),
-                "remaining_need_units": stock.get("remaining_need_units", 0),
-                "inventory_quantity": stock.get("inventory_quantity"),
-                "shortage_units": stock.get("shortage_units"),
-                "weekdays": r.weekdays or "",
-                "specific_dates": r.specific_dates or "",
-                "timing_template": r.timing_template or "fixed",
-                "meal_name": r.meal_name or "",
-                "meal_offset_minutes": r.meal_offset_minutes or 0,
-                "active": r.active,
-            })
+        result = [await serialize_schedule_row(session, r, include_need=False) for r in rows]
         result.sort(key=lambda x: (x["display_time"], x["name"]))
         return result
 
+
+def schedule_should_be_active(course_id: int | None, start_date: date | None) -> bool:
+    if not course_id:
+        return True
+    if start_date is None:
+        return False
+    return start_date <= datetime.now(TZ).date()
 
 @app.post("/api/schedules")
 async def api_add_schedule(payload: AddSchedulePayload, request: Request):
@@ -938,7 +953,6 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
 
             existing = (await session.execute(
                 select(Schedule.id).where(
-                    Schedule.active == True,  # noqa: E712
                     Schedule.profile_id == profile_id,
                     Schedule.medicine_id == med.id,
                     Schedule.dose == payload.dose,
@@ -979,6 +993,7 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 meal_name=entry.meal_name or "",
                 meal_offset_minutes=entry.meal_offset_minutes or 0,
                 inventory_item_id=inv_id,
+                active=schedule_should_be_active(payload.course_id, start_date),
                 consume_units_per_dose=consume_amount,
                 consume_unit_name=consume_unit,
             )
@@ -1030,6 +1045,23 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
         await log_action(session, profile_id, tg_id, "schedule_updated", "schedule", schedule_id, f"{payload.name} — {payload.dose}; {payload.time_local}", commit=True)
         return {"ok": True}
 
+
+
+@app.post("/api/schedules/{schedule_id}/start")
+async def api_start_schedule(schedule_id: int, request: Request):
+    async with SessionLocal() as session:
+        tg_id, role, profile_id = await require_profile_manager(request, session)
+        sched = (await session.execute(select(Schedule).where(Schedule.id == schedule_id, Schedule.profile_id == profile_id))).scalar_one_or_none()
+        if not sched:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        sched.active = True
+        if not sched.start_date:
+            sched.start_date = datetime.now(TZ).date()
+        refresh_schedule_need_fields(sched)
+        await log_action(session, profile_id, tg_id, "schedule_started", "schedule", sched.id, "Курс лекарства начат", commit=False)
+        await session.commit()
+        await ensure_events(session)
+        return {"ok": True}
 
 @app.delete("/api/schedules/{schedule_id}")
 async def api_delete_schedule(schedule_id: int, request: Request):
@@ -1275,7 +1307,7 @@ async def api_medicine_options(request: Request):
         sched_rows = (await session.execute(
             select(Medicine.name)
             .join(Schedule, Schedule.medicine_id == Medicine.id)
-            .where(Medicine.active == True, Schedule.active == True, Schedule.profile_id == profile_id)  # noqa: E712
+            .where(Medicine.active == True, Schedule.profile_id == profile_id)  # noqa: E712
         )).scalars().all()
         names.update([n for n in sched_rows if n])
 
