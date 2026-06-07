@@ -90,6 +90,7 @@
     if(Math.abs(n - Math.round(n)) < 0.000001) return String(Math.round(n));
     return String(Math.round(n * 100) / 100).replace('.', ',');
   }
+  window.fmtNum = fmtNum;
   function groupKey(r){return `${r.time}|${r.label||''}`}
   function groupRows(rows){
     const groups=[]; const map=new Map();
