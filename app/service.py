@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride, InventoryItem
+from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride, InventoryItem, MedicineCourse
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
@@ -432,6 +432,7 @@ async def add_schedule(
     recurrence_type: str = "daily",
     recurrence_interval_days: int = 1,
     course_id: int | None = None,
+    medicine_course_id: int | None = None,
     weekdays: str = "",
     specific_dates: str = "",
     timing_template: str = "fixed",
@@ -445,6 +446,7 @@ async def add_schedule(
     item = Schedule(
         profile_id=profile_id,
         course_id=course_id,
+        medicine_course_id=medicine_course_id,
         medicine_id=med.id,
         dose=dose,
         time_local=hhmm,
@@ -835,6 +837,7 @@ async def update_schedule(
     recurrence_type: str | None = None,
     recurrence_interval_days: int | None = None,
     course_id: int | None = None,
+    medicine_course_id: int | None = None,
     weekdays: str | None = None,
     specific_dates: str | None = None,
     timing_template: str | None = None,
@@ -866,6 +869,8 @@ async def update_schedule(
     if recurrence_interval_days is not None:
         sched.recurrence_interval_days = recurrence_interval_days or 1
     sched.course_id = course_id
+    if medicine_course_id is not None:
+        sched.medicine_course_id = medicine_course_id
     sched.weekdays = weekdays or ""
     sched.specific_dates = specific_dates or ""
     sched.timing_template = timing_template or "fixed"
@@ -880,6 +885,25 @@ async def update_schedule(
     # by the selected medicine from "Лекарства" / medicine_id and then by name.
     sched.inventory_item_id = None
     refresh_schedule_need_fields(sched)
+    if getattr(sched, "medicine_course_id", None):
+        mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == sched.medicine_course_id))).scalar_one_or_none()
+        if mc:
+            mc.assignment_id = course_id
+            mc.medicine_id = med.id
+            mc.name = med.name
+            mc.dose = dose
+            mc.start_date = start_date
+            mc.end_date = end_date
+            mc.recurrence_type = sched.recurrence_type
+            mc.recurrence_interval_days = sched.recurrence_interval_days
+            mc.weekdays = sched.weekdays or ""
+            mc.specific_dates = sched.specific_dates or ""
+            mc.timing_template = sched.timing_template or "fixed"
+            mc.dosage_form = sched.dosage_form or ""
+            mc.administration_route = sched.administration_route or ""
+            mc.analogs = sched.analogs or ""
+            mc.duration_value = duration_value
+            mc.duration_unit = duration_unit or ""
     # A schedule that belongs to an assignment is a course row. It becomes active
     # automatically only when its start date is today/past; otherwise it is started
     # manually by the "Начать курс" action.

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
 
 from .config import get_settings
 
@@ -106,11 +106,39 @@ class Medicine(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class MedicineCourse(Base):
+    __tablename__ = "medicine_courses"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    assignment_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    medicine_id: Mapped[int] = mapped_column(ForeignKey("medicines.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    dose: Mapped[str] = mapped_column(String(255), default="")
+    dosage_form: Mapped[str] = mapped_column(String(100), default="")
+    administration_route: Mapped[str] = mapped_column(String(255), default="")
+    analogs: Mapped[str] = mapped_column(Text, default="")
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_unit: Mapped[str] = mapped_column(String(20), default="")
+    recurrence_type: Mapped[str] = mapped_column(String(20), default="daily")
+    recurrence_interval_days: Mapped[int] = mapped_column(Integer, default=1)
+    weekdays: Mapped[str] = mapped_column(String(40), default="")
+    specific_dates: Mapped[str] = mapped_column(Text, default="")
+    timing_template: Mapped[str] = mapped_column(String(40), default="fixed")
+    planned_doses_count: Mapped[int] = mapped_column(Integer, default=0)
+    planned_units_total: Mapped[float] = mapped_column(Float, default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    medicine: Mapped[Medicine] = relationship()
+
+
 class Schedule(Base):
     __tablename__ = "schedules"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     course_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    medicine_course_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     medicine_id: Mapped[int] = mapped_column(ForeignKey("medicines.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(String(255), default="")
     dose: Mapped[str] = mapped_column(String(255), default="")
@@ -200,6 +228,8 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "users", "active_profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "course_id", "INTEGER")
+
+    await _add_column_if_missing(conn, "schedules", "medicine_course_id", "INTEGER")
     await _add_column_if_missing(conn, "treatment_courses", "assignment_date", date_type)
     await _add_column_if_missing(conn, "schedules", "start_date", date_type)
     await _add_column_if_missing(conn, "schedules", "end_date", date_type)
@@ -226,7 +256,64 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "dose_events", "overdue_alert_sent_at", dt_type)
 
 
+async def migrate_schedule_courses() -> None:
+    """One-time/lightweight migration from old model: schedules doubled as medicine courses.
+
+    We create a medicine_courses row for every logical course and attach existing
+    schedules to it. Existing dose_events keep schedule_id, so completed intakes
+    are preserved. This migration is idempotent.
+    """
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(Schedule).options(selectinload(Schedule.medicine)).where(Schedule.medicine_course_id.is_(None)))).scalars().all()
+        for sched in rows:
+            med = sched.medicine
+            # If schedule belongs to an assignment, one medicine may occur only once inside it.
+            # For legacy rows without assignment, group only identical medicine+dose+period+rules.
+            q = select(MedicineCourse).where(
+                MedicineCourse.profile_id == sched.profile_id,
+                MedicineCourse.assignment_id == sched.course_id,
+                MedicineCourse.medicine_id == sched.medicine_id,
+                MedicineCourse.dose == (sched.dose or ""),
+                MedicineCourse.start_date == sched.start_date,
+                MedicineCourse.end_date == sched.end_date,
+                MedicineCourse.recurrence_type == (sched.recurrence_type or "daily"),
+                MedicineCourse.recurrence_interval_days == (sched.recurrence_interval_days or 1),
+                MedicineCourse.weekdays == (sched.weekdays or ""),
+                MedicineCourse.specific_dates == (sched.specific_dates or ""),
+                MedicineCourse.timing_template == (sched.timing_template or "fixed"),
+            )
+            mc = (await session.execute(q)).scalar_one_or_none()
+            if not mc:
+                mc = MedicineCourse(
+                    profile_id=sched.profile_id,
+                    assignment_id=sched.course_id,
+                    medicine_id=sched.medicine_id,
+                    name=med.name if med else "",
+                    dose=sched.dose or "",
+                    dosage_form=getattr(sched, "dosage_form", "") or "",
+                    administration_route=getattr(sched, "administration_route", "") or "",
+                    analogs=getattr(sched, "analogs", "") or "",
+                    start_date=sched.start_date,
+                    end_date=sched.end_date,
+                    duration_value=getattr(sched, "duration_value", None),
+                    duration_unit=getattr(sched, "duration_unit", "") or "",
+                    recurrence_type=sched.recurrence_type or "daily",
+                    recurrence_interval_days=sched.recurrence_interval_days or 1,
+                    weekdays=sched.weekdays or "",
+                    specific_dates=sched.specific_dates or "",
+                    timing_template=sched.timing_template or "fixed",
+                    planned_doses_count=getattr(sched, "planned_doses_count", 0) or 0,
+                    planned_units_total=getattr(sched, "planned_units_total", 0) or 0,
+                    active=bool(sched.active),
+                )
+                session.add(mc)
+                await session.flush()
+            sched.medicine_course_id = mc.id
+        await session.commit()
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await run_light_migrations(conn)
+    await migrate_schedule_courses()

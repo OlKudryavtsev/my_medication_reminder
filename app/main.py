@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem, MedicineCourse
 from .ai import ai_enabled, ask_json, MEDICINE_SCHEMA_PROMPT, PRESCRIPTION_IMAGE_PROMPT, INVENTORY_PHOTO_PROMPT, REPORT_PROMPT, AIUnavailable
 from .service import (
     seed_default_schedule,
@@ -583,6 +583,7 @@ async def serialize_schedule_row(session, r: Schedule, include_need: bool = Fals
         "recurrence_type": r.recurrence_type or "daily",
         "recurrence_interval_days": r.recurrence_interval_days or 1,
         "course_id": r.course_id,
+        "medicine_course_id": getattr(r, "medicine_course_id", None),
         "weekdays": r.weekdays or "",
         "specific_dates": r.specific_dates or "",
         "timing_template": r.timing_template or "fixed",
@@ -618,7 +619,7 @@ async def api_courses(request: Request):
             items_q = select(Schedule).options(selectinload(Schedule.medicine)).where(
                 Schedule.profile_id == profile_id,
                 Schedule.course_id == c.id,
-            ).order_by(Schedule.active.desc(), Schedule.time_local, Schedule.id)
+            ).order_by(Schedule.active.desc(), Schedule.medicine_course_id, Schedule.time_local, Schedule.id)
             items = (await session.execute(items_q)).scalars().all()
             result.append({
                 "id": c.id,
@@ -934,6 +935,53 @@ async def api_schedules(request: Request):
         return result
 
 
+
+async def ensure_medicine_course_for_payload(session, *, profile_id: int, med: Medicine, payload: AddSchedulePayload, start_date: date | None, end_date: date | None, active: bool) -> MedicineCourse | None:
+    """Create/update course-of-medicine row inside assignment.
+
+    Schedules are only intake rules (times/meal slots). This row is the medical course.
+    For legacy/manual schedules without assignment we still create a technical row so
+    dose_events stay attached to schedules while UI can group by medicine_course_id.
+    """
+    recurrence_type, recurrence_interval_days = normalize_recurrence(payload.recurrence_type, payload.recurrence_interval_days)
+    # User accepted: one medicine occurs only once within one assignment.
+    q = select(MedicineCourse).where(
+        MedicineCourse.profile_id == profile_id,
+        MedicineCourse.assignment_id == payload.course_id,
+        MedicineCourse.medicine_id == med.id,
+    )
+    if not payload.course_id:
+        q = q.where(
+            MedicineCourse.dose == payload.dose,
+            MedicineCourse.start_date == start_date,
+            MedicineCourse.end_date == end_date,
+            MedicineCourse.recurrence_type == recurrence_type,
+            MedicineCourse.recurrence_interval_days == recurrence_interval_days,
+        )
+    mc = (await session.execute(q.order_by(MedicineCourse.id.desc()))).scalars().first()
+    if not mc:
+        mc = MedicineCourse(profile_id=profile_id, assignment_id=payload.course_id, medicine_id=med.id)
+        session.add(mc)
+        await session.flush()
+    mc.name = med.name
+    mc.dose = payload.dose or ""
+    mc.dosage_form = payload.dosage_form or ""
+    mc.administration_route = payload.administration_route or ""
+    mc.analogs = payload.analogs or ""
+    mc.start_date = start_date
+    mc.end_date = end_date
+    mc.duration_value = payload.duration_value
+    mc.duration_unit = payload.duration_unit or ""
+    mc.recurrence_type = recurrence_type
+    mc.recurrence_interval_days = recurrence_interval_days
+    mc.weekdays = payload.weekdays or ""
+    mc.specific_dates = payload.specific_dates or ""
+    # The timing template is course-level summary; individual schedule rows keep exact meal slot/time.
+    first_entry = (payload.entries or [None])[0]
+    mc.timing_template = (first_entry.timing_template if first_entry else "fixed") or "fixed"
+    mc.active = bool(active)
+    return mc
+
 def schedule_should_be_active(course_id: int | None, start_date: date | None) -> bool:
     if not course_id:
         return True
@@ -973,6 +1021,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         default_amount, default_unit = parse_dose_amount(payload.dose)
         consume_amount = float(default_amount or 1)
         consume_unit = default_unit or "шт"
+        course_active = schedule_should_be_active(payload.course_id, start_date)
+        medicine_course = await ensure_medicine_course_for_payload(session, profile_id=profile_id, med=med, payload=payload, start_date=start_date, end_date=end_date, active=course_active)
         created_ids: list[int] = []
         seen_entries: set[tuple[str, str]] = set()
         for entry in entries:
@@ -997,6 +1047,7 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                     Schedule.recurrence_type == recurrence_type,
                     Schedule.recurrence_interval_days == recurrence_interval_days,
                     Schedule.course_id == payload.course_id,
+                    Schedule.medicine_course_id == (medicine_course.id if medicine_course else None),
                     Schedule.inventory_item_id == inv_id,
                     Schedule.consume_units_per_dose == consume_amount,
                     Schedule.weekdays == (payload.weekdays or ""),
@@ -1024,6 +1075,7 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 recurrence_type=recurrence_type,
                 recurrence_interval_days=recurrence_interval_days,
                 course_id=payload.course_id,
+                medicine_course_id=medicine_course.id if medicine_course else None,
                 weekdays=payload.weekdays or "",
                 specific_dates=payload.specific_dates or "",
                 timing_template=entry.timing_template or "fixed",
@@ -1035,7 +1087,7 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 duration_value=payload.duration_value,
                 duration_unit=payload.duration_unit or "",
                 inventory_item_id=inv_id,
-                active=schedule_should_be_active(payload.course_id, start_date),
+                active=course_active,
                 consume_units_per_dose=consume_amount,
                 consume_unit_name=consume_unit,
             )
@@ -1111,6 +1163,12 @@ async def api_start_schedule(schedule_id: int, request: Request):
             if computed_end:
                 sched.end_date = computed_end
         refresh_schedule_need_fields(sched)
+        if getattr(sched, "medicine_course_id", None):
+            mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == sched.medicine_course_id))).scalar_one_or_none()
+            if mc:
+                mc.active = True
+                mc.start_date = sched.start_date
+                mc.end_date = sched.end_date
         await log_action(session, profile_id, tg_id, "schedule_started", "schedule", sched.id, "Курс лекарства начат", commit=False)
         await session.commit()
         await ensure_events(session)
