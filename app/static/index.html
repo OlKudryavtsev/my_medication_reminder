@@ -80,6 +80,31 @@
 .treeActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.treeActions button{min-height:34px;border-radius:12px;font-size:12px}.scheduleGroupToggle{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 12px}.scheduleGroupToggle button{background:var(--soft);color:var(--muted);border:1px solid var(--line);font-weight:900}.scheduleGroupToggle button.active{background:var(--brand2);color:var(--brand);border-color:rgba(45,125,245,.32)}
 .scheduleTreeGroup{border:1px solid var(--line);border-radius:18px;background:var(--card);margin:10px 0;overflow:hidden}.scheduleTreeHead{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;background:var(--soft);font-weight:950;cursor:pointer}.scheduleTreeBody{padding:6px 10px 10px}
 .scheduleMiniCard{display:grid;grid-template-columns:74px minmax(0,1fr);gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}.scheduleMiniCard:last-child{border-bottom:0}.scheduleMiniSlot{font-size:15px;font-weight:950;color:var(--brand)}.scheduleMiniName{font-size:16px;font-weight:950}.scheduleMiniMeta{font-size:12px;color:var(--muted);font-weight:750;margin-top:2px}.scheduleMiniDetails{grid-column:1/-1;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:6px}.segmentedFlag{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+    /* v38 compact UX fixes */
+    .courseDetailList{display:flex;flex-direction:column;gap:5px;margin-top:2px}
+    .detailRow{display:grid;grid-template-columns:42% 1fr;gap:8px;align-items:start;padding:5px 0;border-bottom:1px dashed rgba(120,130,150,.18);font-size:12px;line-height:1.25}
+    .detailRow:last-child{border-bottom:0}
+    .detailRow span{color:var(--muted);font-weight:850;text-transform:none;letter-spacing:0}
+    .detailRow b{font-weight:850;color:var(--text);word-break:break-word}
+    .analogsRow{grid-template-columns:30% 1fr}
+    .scheduleToolbar{margin:6px 0 10px}
+    .scheduleToolbarCompact{width:100%;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:nowrap}
+    .miniSwitch{display:flex;gap:4px;padding:4px;border-radius:14px;background:var(--soft);border:1px solid var(--line)}
+    .miniSwitch button{min-height:34px;padding:7px 10px;border-radius:11px;background:transparent;color:var(--muted);box-shadow:none;font-size:12px;font-weight:900;white-space:nowrap}
+    .miniSwitch button.active{background:var(--brand2);color:var(--brand);border:1px solid rgba(45,125,245,.22)}
+    .scheduleListLikeToday{border-radius:18px;background:var(--card);border:1px solid var(--line);overflow:hidden}
+    .scheduleListLikeToday .scheduleMiniCard,.scheduleTreeBody .scheduleMiniCard{border-bottom:1px solid var(--line);border-radius:0;margin:0;box-shadow:none}
+    .scheduleListLikeToday .scheduleMiniCard:last-child,.scheduleTreeBody .scheduleMiniCard:last-child{border-bottom:0}
+    .scheduleTreeGroup{margin:8px 0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
+    .scheduleTreeHead{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--soft);font-size:15px;font-weight:950;cursor:pointer}
+    .scheduleTreeBody{padding:0;background:var(--card)}
+    .scheduleMiniCard{display:grid;grid-template-columns:82px 1fr;gap:10px;padding:12px 14px;background:var(--card)}
+    .scheduleMiniSlot{font-size:14px;font-weight:950;color:var(--brand);line-height:1.2}
+    .scheduleMiniName{font-size:16px;font-weight:950}
+    .scheduleMiniMeta{font-size:12px;color:var(--muted);font-weight:750;margin-top:3px;line-height:1.25}
+    .scheduleMiniDetails{grid-column:1/-1;margin-top:6px;padding:8px 10px;background:var(--soft);border-radius:14px}
+    @media(max-width:390px){.scheduleToolbarCompact{gap:5px}.miniSwitch button{font-size:11px;padding:6px 8px}.scheduleMiniCard{grid-template-columns:72px 1fr;padding:11px 12px}.detailRow{grid-template-columns:40% 1fr}}
 </style>
 </head>
 <body>
@@ -712,7 +737,25 @@
   function courseNeedPanel(g){const x=courseNeedsStatus(g);return `<div class="needPanel"><div><b>Расчет на курс</b></div><div class="needLine">Нужно: <b>${fmtNum(g.planned_units_total||0)} ${x.unit}</b> · уже принято: <b>${fmtNum(g.taken_units||0)} ${x.unit}</b></div><div class="needLine">Осталось нужно: <b>${fmtNum(g.remaining_need_units||0)} ${x.unit}</b> · в аптечке: <b>${x.stock} ${x.unit}</b></div><div class="courseNeedStatus">${x.ok}</div></div>`;}
   function courseCourseHeader(g,key){const dur=durationText(g.start_date,g.end_date,g.duration_value,g.duration_unit);const meta=[escapeHtml(g.dose||''), escapeHtml(courseFreqText(g)), escapeHtml(courseApplyText(g))].filter(Boolean).join(' · ');return `<div class="courseGroupHeader" onclick="toggleCourseGroup('${key}')"><div><div class="courseTitle">${escapeHtml(g.name||'Лекарство')} ${dur&&dur!=='длительность не указана'?`<span class="muted">· ${escapeHtml(dur)}</span>`:''}</div><div class="courseDuration">${meta}</div><div class="courseMetaLine"><span class="courseChip">${g.active_all?'активен':(g.active_any?'частично активен':'не начат')}</span>${g.analogs?'<span class="courseChip">есть аналоги</span>':''}</div></div><div class="chev" id="chev_${key}">＋</div></div>`}
   function toggleCourseGroup(key){const el=document.getElementById('courseBody_'+key); const ch=document.getElementById('chev_'+key); if(!el)return; const hid=el.classList.toggle('hidden'); if(ch)ch.textContent=hid?'＋':'−';}
-  function courseGroupBody(g,key){const dp=doseParts(g.dose);const period=`${g.start_date||'—'} — ${g.end_date||'—'}`;const analogs=(g.analogs||'').trim();const route=(g.administration_route||'').trim();const form=(g.dosage_form||dp.unit||'').trim();const inactiveActions = g.active_all ? '' : `<button onclick="startScheduleGroup('${g.ids.join(',')}')">Начать курс</button>`;return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="infoGrid"><div class="infoPill"><div class="k">Название</div><div class="v">${escapeHtml(g.name||'—')}</div></div><div class="infoPill"><div class="k">Формат</div><div class="v">${escapeHtml(form||'—')}</div></div><div class="infoPill"><div class="k">Дозировка</div><div class="v">${escapeHtml(g.dose||'—')}</div></div><div class="infoPill"><div class="k">Периодичность</div><div class="v">${escapeHtml(courseFreqText(g))}</div></div><div class="infoPill"><div class="k">Прием</div><div class="v">${escapeHtml(courseApplyText(g))}</div></div><div class="infoPill"><div class="k">Способ применения</div><div class="v">${escapeHtml(route||'—')}</div></div><div class="infoPill"><div class="k">Длительность</div><div class="v">${escapeHtml(durationText(g.start_date,g.end_date,g.duration_value,g.duration_unit))}</div></div><div class="infoPill"><div class="k">Период</div><div class="v">${escapeHtml(period)}</div></div></div>${analogs?`<div class="infoPill" style="margin-top:8px"><div class="k">Аналоги из назначения</div><div class="v">${escapeHtml(analogs)}</div></div>`:''}${courseNeedPanel(g)}<div class="adminActions">${inactiveActions}<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div></div>`;}
+  function courseGroupBody(g,key){
+    const dp=doseParts(g.dose);
+    const period=`${g.start_date||'—'} — ${g.end_date||'—'}`;
+    const analogs=(g.analogs||'').trim();
+    const route=(g.administration_route||'').trim();
+    const form=(g.dosage_form||dp.unit||'').trim();
+    const inactiveActions = g.active_all ? '' : `<button onclick="startScheduleGroup('${g.ids.join(',')}')">Начать курс</button>`;
+    const rows=[
+      ['Формат', form||'—'],
+      ['Дозировка', g.dose||'—'],
+      ['Периодичность', courseFreqText(g)],
+      ['Прием', courseApplyText(g)],
+      ['Способ применения', route||'—'],
+      ['Длительность', durationText(g.start_date,g.end_date,g.duration_value,g.duration_unit)],
+      ['Период', period]
+    ];
+    const details=rows.map(([k,v])=>`<div class="detailRow"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('');
+    return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="courseDetailList">${details}${analogs?`<div class="detailRow analogsRow"><span>Аналоги</span><b>${escapeHtml(analogs)}</b></div>`:''}</div>${courseNeedPanel(g)}<div class="adminActions">${inactiveActions}<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div></div>`;
+  }
   function courseGroupCard(g){const key='cg_'+g.course_id+'_'+g.ids.join('_'); window.courseGroups[key]=g; return `<div class="courseMedCard">${courseCourseHeader(g,key)}${courseGroupBody(g,key)}</div>`;}
   function groupCourseItems(items){const map=new Map();(items||[]).forEach(it=>{const key=[it.course_id||'',(it.name||'').toLowerCase(),it.dose||'',it.start_date||'',it.end_date||'',it.recurrence_type||'',it.recurrence_interval_days||'',it.weekdays||'',it.specific_dates||'',it.timing_template||''].join('|');if(!map.has(key)) map.set(key,{...it, ids:[], entries:[], planned_units_total:0, remaining_need_units:0, taken_units:0, active_any:false, active_all:true});const g=map.get(key);g.ids.push(it.id); g.entries.push(it);g.planned_units_total += Number(it.planned_units_total||0);g.remaining_need_units += Number(it.remaining_need_units||0);g.taken_units += Number(it.taken_units||0);if(g.inventory_quantity==null && it.inventory_quantity!=null)g.inventory_quantity=it.inventory_quantity;g.consume_unit_name = g.consume_unit_name || it.consume_unit_name || doseParts(it.dose).unit || 'шт';g.active_any = g.active_any || !!it.active; g.active_all = g.active_all && !!it.active;g.shortage_units = Math.max(0, Number(g.remaining_need_units||0) - Number(g.inventory_quantity||0));g.duration_value = g.duration_value || it.duration_value; g.duration_unit = g.duration_unit || it.duration_unit;});return [...map.values()];}
   function courseItemsBlock(course){const groups=groupCourseItems(course.items||[]);return `<div class="courseItems"><div class="courseItemsTitle">Курсы лекарств</div>${groups.length?groups.map(courseGroupCard).join(''):'<div class="empty compactEmpty">Курсов лекарств пока нет</div>'}</div>`;}
@@ -738,8 +781,23 @@
   let expandedScheduleGroups = window.expandedScheduleGroups || new Set();
   let scheduleGroupByAssignmentUi = true;
   function assignmentHeaderMeta(c){return `Дата: ${escapeHtml(c.assignment_date||'—')}${c.doctor?' · '+escapeHtml(c.doctor):''}`}
-  function toggleAssignmentTree(id){ if(expandedAssignments.has(id)) expandedAssignments.delete(id); else expandedAssignments.add(id); loadCourses(); }
-  function toggleScheduleTreeGroup(key){ if(expandedScheduleGroups.has(key)) expandedScheduleGroups.delete(key); else expandedScheduleGroups.add(key); loadSchedules(); }
+  function toggleAssignmentTree(id){
+    const key=Number(id);
+    if(expandedAssignments.has(key)) expandedAssignments.delete(key); else expandedAssignments.add(key);
+    const body=document.getElementById('assignmentBody_'+key);
+    const chev=document.getElementById('assignmentChev_'+key);
+    if(body){const isHidden=body.classList.toggle('hidden'); if(chev)chev.textContent=isHidden?'＋':'−';}
+  }
+  function toggleScheduleTreeGroup(key){
+    if(expandedScheduleGroups.has(key)) expandedScheduleGroups.delete(key); else expandedScheduleGroups.add(key);
+    const body=document.getElementById('scheduleTreeBody_'+key);
+    const chev=document.getElementById('scheduleTreeChev_'+key);
+    if(body){const isHidden=body.classList.toggle('hidden'); if(chev)chev.textContent=isHidden?'＋':'−';}
+  }
+  function setScheduleGroupsOpen(open){
+    document.querySelectorAll('.scheduleTreeBody').forEach(el=>{el.classList.toggle('hidden',!open);});
+    document.querySelectorAll('.scheduleTreeHead').forEach(head=>{const key=head.dataset.key; if(!key)return; if(open)expandedScheduleGroups.add(key); else expandedScheduleGroups.delete(key); const chev=document.getElementById('scheduleTreeChev_'+key); if(chev)chev.textContent=open?'−':'＋';});
+  }
   function assignmentCourseGroups(course){ return groupCourseItems(course.items||[]); }
   function assignmentCoursesTree(course){
     const groups=assignmentCourseGroups(course);
@@ -762,7 +820,7 @@
       const list=rows.length?rows.map(c=>{
         const open=expandedAssignments.has(c.id);
         const safeName=escapeAttr(c.name||''),safeDoctor=escapeAttr(c.doctor||''),safeComment=escapeAttr(c.comment||'');
-        return `<div class="assignmentTreeCard"><div class="assignmentTreeHead" onclick="toggleAssignmentTree(${c.id})"><div><div class="assignmentTreeTitle">${escapeHtml(c.name||'Без названия')}</div><div class="assignmentTreeMeta">${assignmentHeaderMeta(c)} · курсов: ${(c.items||[]).length?assignmentCourseGroups(c).length:0}</div></div><div class="chev">${open?'−':'＋'}</div></div><div class="assignmentTreeBody ${open?'':'hidden'}">${c.comment?`<div class="muted" style="font-size:12px;margin-bottom:6px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div><div class="treeActions"><button onclick="openCourseMedicineForm(${c.id})">Добавить курс</button><button class="gray" onclick="aiAddMedicineToCourse(${c.id})" ${aiEnabled?'':'disabled'}>Распознать курс из текста</button><button class="gray" onclick="editCourse(${c.id}, '${safeName}', '${c.assignment_date||''}', '${safeDoctor}', '${safeComment}')">Изменить назначение</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div><div class="courseItemsTitle">Курсы лекарств</div>${assignmentCoursesTree(c)}</div></div>`;
+        return `<div class="assignmentTreeCard"><div class="assignmentTreeHead" onclick="toggleAssignmentTree(${c.id})"><div><div class="assignmentTreeTitle">${escapeHtml(c.name||'Без названия')}</div><div class="assignmentTreeMeta">${assignmentHeaderMeta(c)} · курсов: ${(c.items||[]).length?assignmentCourseGroups(c).length:0}</div></div><div class="chev" id="assignmentChev_${c.id}">${open?'−':'＋'}</div></div><div id="assignmentBody_${c.id}" class="assignmentTreeBody ${open?'':'hidden'}">${c.comment?`<div class="muted" style="font-size:12px;margin-bottom:6px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div><div class="treeActions"><button onclick="openCourseMedicineForm(${c.id})">Добавить курс</button><button class="gray" onclick="aiAddMedicineToCourse(${c.id})" ${aiEnabled?'':'disabled'}>Распознать курс из текста</button><button class="gray" onclick="editCourse(${c.id}, '${safeName}', '${c.assignment_date||''}', '${safeDoctor}', '${safeComment}')">Изменить назначение</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div><div class="courseItemsTitle">Курсы лекарств</div>${assignmentCoursesTree(c)}</div></div>`;
       }).join(''):'<div class="empty">Назначений пока нет</div>';
       root.innerHTML=rootActions+recognize+addForm+`<div class="adminList" style="margin-top:14px">${list}</div>`;
     }catch(e){console.error('loadCourses failed',e);root.innerHTML=`<div class="empty">Не удалось загрузить назначения.<br><br><small>${escapeHtml(e.message||String(e))}</small></div>`;toast('Ошибка загрузки назначений');}
@@ -772,7 +830,20 @@
   }
   function scheduleForm(r){const detailKey='sd_'+r.id;const slot=scheduleSlotText(r);const courseName=assignmentGroupName(r);const courseLabel=r.name||'Курс';return `<div class="scheduleMiniCard"><div class="scheduleMiniSlot">${escapeHtml(slot)}</div><div class="scheduleCourseToggle" onclick="toggleScheduleDetails('${detailKey}')"><div class="scheduleMiniName">${escapeHtml(r.name)}</div><div class="scheduleMiniMeta">Назначение: ${escapeHtml(courseName)} · курс: ${escapeHtml(courseLabel)}</div></div><div id="${detailKey}" class="scheduleMiniDetails hidden"><div class="muted" style="font-size:12px">${escapeHtml(r.dose||'')}${r.label?' · '+escapeHtml(r.label):''}<br>Период: ${r.start_date||'—'} — ${r.end_date||'—'}</div><div class="adminActions"><button class="gray" onclick="editSchedules.add(${r.id});legacyScheduleEdit(${r.id})">Изменить привязку</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button></div></div></div>`;}
   async function legacyScheduleEdit(id){const rows=await api('/api/schedules');const r=rows.find(x=>Number(x.id)===Number(id));if(!r)return;const body=`<label>Назначение</label>${courseSelectHtml(id,r.course_id)}<div class="muted" style="font-size:12px;margin-top:8px">Для полного изменения курса перейдите во вкладку “Назначения” и откройте курс лекарства.</div>`;const ok=await openModal('Привязать к назначению',body,()=>closeModal({course_id:document.getElementById('s_course_'+id)?.value?Number(document.getElementById('s_course_'+id).value):null}),'Сохранить');if(!ok)return;await api('/api/schedules/'+id,{method:'PUT',body:JSON.stringify({...r,course_id:ok.course_id,entries:[{time_local:r.time_local,label:r.label||r.time_local,timing_template:r.timing_template||'fixed',meal_name:r.meal_name||'',meal_offset_minutes:r.meal_offset_minutes||0}]})});toast('Привязка обновлена');editSchedules.delete(id);await loadSchedules();await loadCourses();}
-  async function loadSchedules(){if(!me?.can_manage_current_profile)return;if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}let rows=await api('/api/schedules');const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');if(selected)rows=rows.filter(r=>(r.name||'')===selected);const root=document.getElementById('schedules');const toolbar=document.querySelector('.scheduleToolbar');if(toolbar){toolbar.innerHTML=`<div class="segmentedFlag"><span class="muted" style="font-size:12px;font-weight:900">Группировка</span></div><div class="scheduleGroupToggle"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">По назначению</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Без группировки</button></div>`}if(!rows.length){root.innerHTML='<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>';return}if(!scheduleGroupByAssignmentUi){root.innerHTML=`<div class="dayGroup">${rows.map(scheduleForm).join('')}</div>`;return}const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span>${open?'−':'＋'}</span></div><div class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');}
+  async function loadSchedules(){
+    if(!me?.can_manage_current_profile)return;
+    if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}
+    let rows=await api('/api/schedules');
+    const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');
+    if(selected)rows=rows.filter(r=>(r.name||'')===selected);
+    const root=document.getElementById('schedules');
+    const toolbar=document.querySelector('.scheduleToolbar');
+    if(toolbar){toolbar.innerHTML=`<div class="scheduleToolbarCompact"><div class="miniSwitch"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">Группировать</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Списком</button></div><div class="miniSwitch"><button onclick="setScheduleGroupsOpen(true)">Раскрыть</button><button onclick="setScheduleGroupsOpen(false)">Скрыть</button></div></div>`}
+    if(!rows.length){root.innerHTML='<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>';return}
+    if(!scheduleGroupByAssignmentUi){root.innerHTML=`<div class="scheduleListLikeToday">${rows.map(scheduleForm).join('')}</div>`;return}
+    const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});
+    root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');if(!expandedScheduleGroups.has(key)) expandedScheduleGroups.add(key);const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" data-key="${key}" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span id="scheduleTreeChev_${key}">${open?'−':'＋'}</span></div><div id="scheduleTreeBody_${key}" class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');
+  }
 
   async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
   init();
