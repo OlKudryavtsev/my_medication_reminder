@@ -648,9 +648,10 @@ async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
     await session.commit()
 
 
-async def get_today_events(session: AsyncSession, profile_id: int | None = None) -> list[DoseEvent]:
+async def get_today_events(session: AsyncSession, profile_id: int | None = None, target_date: date | None = None) -> list[DoseEvent]:
     now = datetime.now(TZ)
-    start = datetime.combine(now.date(), time.min, tzinfo=TZ)
+    day = target_date or now.date()
+    start = datetime.combine(day, time.min, tzinfo=TZ)
     end = start + timedelta(days=1)
     q = select(DoseEvent).options(selectinload(DoseEvent.schedule).selectinload(Schedule.medicine)).join(Schedule).where(
         Schedule.active == True,  # noqa: E712
@@ -1184,7 +1185,7 @@ async def get_history_for_medicine(session: AsyncSession, medicine_id: int, days
     return list((await session.execute(q)).scalars().all())
 
 
-async def get_stats(session: AsyncSession, medicine_id: int | None = None, days: int = 30, profile_id: int | None = None) -> list[dict]:
+async def get_stats(session: AsyncSession, medicine_id: int | None = None, days: int = 30, profile_id: int | None = None, course_id: int | None = None) -> list[dict]:
     now = datetime.now(TZ)
     start = now - timedelta(days=days)
     q = select(
@@ -1202,6 +1203,8 @@ async def get_stats(session: AsyncSession, medicine_id: int | None = None, days:
         q = q.where(Schedule.profile_id == profile_id)
     if medicine_id:
         q = q.where(Medicine.id == medicine_id)
+    if course_id:
+        q = q.where(Schedule.course_id == course_id)
     rows = (await session.execute(q)).all()
     result = []
     for r in rows:

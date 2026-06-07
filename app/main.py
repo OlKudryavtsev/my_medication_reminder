@@ -856,11 +856,12 @@ async def api_download_attachment(attachment_id: int, request: Request):
 
 
 @app.get("/api/today", response_class=ORJSONResponse)
-async def api_today(request: Request):
+async def api_today(request: Request, day: str | None = None):
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile(request, session)
         await ensure_events(session)
-        events = await get_today_events(session, profile_id=profile_id)
+        target_day = parse_date_or_none(day) if day else None
+        events = await get_today_events(session, profile_id=profile_id, target_date=target_day)
         return [
             {
                 "id": e.id,
@@ -1574,10 +1575,10 @@ async def api_report_pdf(request: Request, days: int = 30):
 
 
 @app.get("/api/stats", response_class=ORJSONResponse)
-async def api_stats(request: Request, medicine_id: int | None = None, days: int = 30):
+async def api_stats(request: Request, medicine_id: int | None = None, days: int = 30, course_id: int | None = None):
     async with SessionLocal() as session:
         tg_id, role, profile_id = await require_profile(request, session)
-        return await get_stats(session, medicine_id=medicine_id, days=days, profile_id=profile_id)
+        return await get_stats(session, medicine_id=medicine_id, days=days, profile_id=profile_id, course_id=course_id)
 
 
 @app.get("/api/medicines", response_class=ORJSONResponse)
