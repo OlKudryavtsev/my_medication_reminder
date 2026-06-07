@@ -80,6 +80,9 @@ MEDICINE_SCHEMA_PROMPT = """
     {
       "name": "название препарата или пусто",
       "dose": "дозировка или пусто",
+      "dosage_form": "форма выпуска: таблетки/капсулы/мл/пакеты или пусто",
+      "administration_route": "способ применения: внутрь/развести в жидкости/другое или пусто",
+      "analogs": ["аналогичные названия препарата, если перечислены в назначении"],
       "frequency_count": 1,
       "frequency_unit": "day|week|2weeks|month|custom",
       "timing_template": "fixed|before_meal|with_meal|after_meal",

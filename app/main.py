@@ -102,6 +102,9 @@ class AddSchedulePayload(BaseModel):
     consume_unit_name: str = ""
     weekdays: str = ""
     specific_dates: str = ""
+    dosage_form: str = ""
+    administration_route: str = ""
+    analogs: str = ""
     entries: list[ScheduleEntryPayload] | None = None
 
 
@@ -570,6 +573,9 @@ async def serialize_schedule_row(session, r: Schedule, include_need: bool = Fals
         "timing_template": r.timing_template or "fixed",
         "meal_name": r.meal_name or "",
         "meal_offset_minutes": r.meal_offset_minutes or 0,
+        "dosage_form": getattr(r, "dosage_form", "") or "",
+        "administration_route": getattr(r, "administration_route", "") or "",
+        "analogs": getattr(r, "analogs", "") or "",
         "active": bool(r.active),
     }
     if include_need:
@@ -979,6 +985,9 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                     Schedule.timing_template == ((entry.timing_template or "fixed")),
                     Schedule.meal_name == (entry.meal_name or ""),
                     Schedule.meal_offset_minutes == (entry.meal_offset_minutes or 0),
+                    Schedule.dosage_form == (payload.dosage_form or ""),
+                    Schedule.administration_route == (payload.administration_route or ""),
+                    Schedule.analogs == (payload.analogs or ""),
                 )
             )).scalar_one_or_none()
             if existing:
@@ -1001,6 +1010,9 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
                 timing_template=entry.timing_template or "fixed",
                 meal_name=entry.meal_name or "",
                 meal_offset_minutes=entry.meal_offset_minutes or 0,
+                dosage_form=payload.dosage_form or "",
+                administration_route=payload.administration_route or "",
+                analogs=payload.analogs or "",
                 inventory_item_id=inv_id,
                 active=schedule_should_be_active(payload.course_id, start_date),
                 consume_units_per_dose=consume_amount,
@@ -1048,6 +1060,9 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
             timing_template=(payload.entries[0].timing_template if payload.entries else "fixed"),
             meal_name=(payload.entries[0].meal_name if payload.entries else ""),
             meal_offset_minutes=(payload.entries[0].meal_offset_minutes if payload.entries else 0),
+            dosage_form=payload.dosage_form,
+            administration_route=payload.administration_route,
+            analogs=payload.analogs,
         )
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
@@ -1079,7 +1094,7 @@ async def api_delete_schedule(schedule_id: int, request: Request):
         sched = (await session.execute(select(Schedule).where(Schedule.id == schedule_id, Schedule.profile_id == profile_id))).scalar_one_or_none()
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        sched.active = False
+        await session.delete(sched)
         await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален прием из расписания", commit=False)
         await session.commit()
         return {"ok": True}
