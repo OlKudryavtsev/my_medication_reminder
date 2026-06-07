@@ -72,6 +72,7 @@ from .service import (
     schedule_stock_info,
     schedule_applies_on_day,
     adjust_inventory_for_event,
+    local_dt,
 )
 
 settings = get_settings()
