@@ -129,6 +129,7 @@ class MedicineCourse(Base):
     planned_doses_count: Mapped[int] = mapped_column(Integer, default=0)
     planned_units_total: Mapped[float] = mapped_column(Float, default=0.0)
     active: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft/active/completed/cancelled
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     medicine: Mapped[Medicine] = relationship()
 
@@ -250,6 +251,7 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "schedules", "analogs", "TEXT DEFAULT ''")
     await _add_column_if_missing(conn, "schedules", "duration_value", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "duration_unit", "VARCHAR(20) DEFAULT ''")
+    await _add_column_if_missing(conn, "medicine_courses", "status", "VARCHAR(20) DEFAULT 'draft'")
     await _add_column_if_missing(conn, "dose_events", "skipped_at", dt_type)
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)
@@ -305,9 +307,12 @@ async def migrate_schedule_courses() -> None:
                     planned_doses_count=getattr(sched, "planned_doses_count", 0) or 0,
                     planned_units_total=getattr(sched, "planned_units_total", 0) or 0,
                     active=bool(sched.active),
+                    status="active" if sched.active else "draft",
                 )
                 session.add(mc)
                 await session.flush()
+            if not getattr(mc, "status", None):
+                mc.status = "active" if bool(mc.active) else "draft"
             sched.medicine_course_id = mc.id
         await session.commit()
 

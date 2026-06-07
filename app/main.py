@@ -969,9 +969,12 @@ async def ensure_medicine_course_for_payload(session, *, profile_id: int, med: M
     mc.administration_route = payload.administration_route or ""
     mc.analogs = payload.analogs or ""
     mc.start_date = start_date
-    mc.end_date = end_date
     mc.duration_value = payload.duration_value
     mc.duration_unit = payload.duration_unit or ""
+    if start_date and payload.duration_value:
+        mc.end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit) or end_date
+    else:
+        mc.end_date = end_date
     mc.recurrence_type = recurrence_type
     mc.recurrence_interval_days = recurrence_interval_days
     mc.weekdays = payload.weekdays or ""
@@ -980,14 +983,18 @@ async def ensure_medicine_course_for_payload(session, *, profile_id: int, med: M
     first_entry = (payload.entries or [None])[0]
     mc.timing_template = (first_entry.timing_template if first_entry else "fixed") or "fixed"
     mc.active = bool(active)
+    mc.status = "active" if active else ("completed" if mc.end_date and mc.end_date < datetime.now(TZ).date() else "draft")
     return mc
 
-def schedule_should_be_active(course_id: int | None, start_date: date | None) -> bool:
+def schedule_should_be_active(course_id: int | None, start_date: date | None, end_date: date | None = None) -> bool:
     if not course_id:
         return True
+    today = datetime.now(TZ).date()
     if start_date is None:
         return False
-    return start_date <= datetime.now(TZ).date()
+    if end_date and end_date < today:
+        return False
+    return start_date <= today
 
 @app.post("/api/schedules")
 async def api_add_schedule(payload: AddSchedulePayload, request: Request):
@@ -995,8 +1002,8 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         tg_id, role, profile_id = await require_profile_manager(request, session)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
-    if start_date and not end_date:
-        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit)
+    if start_date and payload.duration_value:
+        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit) or end_date
     recurrence_type, recurrence_interval_days = normalize_recurrence(payload.recurrence_type, payload.recurrence_interval_days)
     if recurrence_type not in {"daily", "weekly", "monthly", "specific_dates"}:
         raise HTTPException(status_code=400, detail="Unsupported recurrence_type")
@@ -1018,10 +1025,20 @@ async def api_add_schedule(payload: AddSchedulePayload, request: Request):
         # by medicine_id/name from the "Аптечка" tab. Dose is the only source for
         # расход/потребность calculations.
         inv_id = None
+        if payload.course_id:
+            duplicate_mc = (await session.execute(select(MedicineCourse).where(
+                MedicineCourse.profile_id == profile_id,
+                MedicineCourse.assignment_id == payload.course_id,
+                MedicineCourse.medicine_id == med.id,
+                MedicineCourse.status != "completed",
+            ))).scalar_one_or_none()
+            if duplicate_mc:
+                raise HTTPException(status_code=409, detail=f"В этом назначении уже есть {med.name}. Откройте существующий курс и измените его.")
+
         default_amount, default_unit = parse_dose_amount(payload.dose)
         consume_amount = float(default_amount or 1)
         consume_unit = default_unit or "шт"
-        course_active = schedule_should_be_active(payload.course_id, start_date)
+        course_active = schedule_should_be_active(payload.course_id, start_date, end_date)
         medicine_course = await ensure_medicine_course_for_payload(session, profile_id=profile_id, med=med, payload=payload, start_date=start_date, end_date=end_date, active=course_active)
         created_ids: list[int] = []
         seen_entries: set[tuple[str, str]] = set()
@@ -1109,12 +1126,24 @@ async def api_update_schedule(schedule_id: int, payload: AddSchedulePayload, req
         tg_id, role, profile_id = await require_profile_manager(request, session)
     start_date = parse_date_or_none(payload.start_date)
     end_date = parse_date_or_none(payload.end_date)
-    if start_date and not end_date:
-        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit)
+    if start_date and payload.duration_value:
+        end_date = calc_end_date_from_duration(start_date, payload.duration_value, payload.duration_unit) or end_date
     async with SessionLocal() as session:
         existing = (await session.execute(select(Schedule).where(Schedule.id == schedule_id, Schedule.profile_id == profile_id))).scalar_one_or_none()
         if not existing:
             raise HTTPException(status_code=404, detail="Schedule not found")
+        if payload.course_id and payload.name:
+            med_for_check = (await session.execute(select(Medicine).where(Medicine.name == payload.name))).scalar_one_or_none()
+            if med_for_check:
+                duplicate_mc = (await session.execute(select(MedicineCourse).where(
+                    MedicineCourse.profile_id == profile_id,
+                    MedicineCourse.assignment_id == payload.course_id,
+                    MedicineCourse.medicine_id == med_for_check.id,
+                    MedicineCourse.id != (existing.medicine_course_id or 0),
+                    MedicineCourse.status != "completed",
+                ))).scalar_one_or_none()
+                if duplicate_mc:
+                    raise HTTPException(status_code=409, detail=f"В этом назначении уже есть {med_for_check.name}. Измените существующий курс.")
         sched = await update_schedule(
             session,
             schedule_id=schedule_id,
@@ -1158,15 +1187,15 @@ async def api_start_schedule(schedule_id: int, request: Request):
         sched.active = True
         if not sched.start_date:
             sched.start_date = datetime.now(TZ).date()
-        if not sched.end_date:
-            computed_end = calc_end_date_from_duration(sched.start_date, getattr(sched, "duration_value", None), getattr(sched, "duration_unit", ""))
-            if computed_end:
-                sched.end_date = computed_end
+        computed_end = calc_end_date_from_duration(sched.start_date, getattr(sched, "duration_value", None), getattr(sched, "duration_unit", ""))
+        if computed_end:
+            sched.end_date = computed_end
         refresh_schedule_need_fields(sched)
         if getattr(sched, "medicine_course_id", None):
             mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == sched.medicine_course_id))).scalar_one_or_none()
             if mc:
                 mc.active = True
+                mc.status = "active"
                 mc.start_date = sched.start_date
                 mc.end_date = sched.end_date
         await log_action(session, profile_id, tg_id, "schedule_started", "schedule", sched.id, "Курс лекарства начат", commit=False)
@@ -1181,8 +1210,22 @@ async def api_delete_schedule(schedule_id: int, request: Request):
         sched = (await session.execute(select(Schedule).where(Schedule.id == schedule_id, Schedule.profile_id == profile_id))).scalar_one_or_none()
         if not sched:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        await session.delete(sched)
-        await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален прием из расписания", commit=False)
+        sched.active = False
+        # Preserve already completed intake history; remove only future pending events.
+        from .service import rebuild_future_events_for_schedule
+        await rebuild_future_events_for_schedule(session, sched.id)
+        if getattr(sched, "medicine_course_id", None):
+            still_active = (await session.execute(select(Schedule.id).where(
+                Schedule.medicine_course_id == sched.medicine_course_id,
+                Schedule.id != sched.id,
+                Schedule.active == True,
+            ))).scalar_one_or_none()
+            if not still_active:
+                mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == sched.medicine_course_id))).scalar_one_or_none()
+                if mc:
+                    mc.active = False
+                    mc.status = "cancelled"
+        await log_action(session, profile_id, tg_id, "schedule_deleted", "schedule", schedule_id, f"Удален будущий прием из расписания", commit=False)
         await session.commit()
         return {"ok": True}
 

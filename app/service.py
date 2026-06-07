@@ -364,6 +364,96 @@ def refresh_schedule_need_fields(sched: Schedule) -> None:
     sched.planned_units_total = round(days_count * float(sched.consume_units_per_dose or 1), 3)
 
 
+
+def calc_end_date_from_duration_value(start_date: date | None, duration_value: int | None, duration_unit: str | None) -> date | None:
+    """Return inclusive end date for a course duration.
+
+    14 days starting 2026-06-01 ends 2026-06-14.
+    1 week ends after 7 calendar days inclusive.
+    1 month uses calendar month then minus one day.
+    """
+    if not start_date or not duration_value:
+        return None
+    try:
+        n = int(duration_value)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    unit = (duration_unit or "days").strip().lower()
+    if unit in {"day", "days", "день", "дня", "дней"}:
+        return start_date + timedelta(days=n - 1)
+    if unit in {"week", "weeks", "неделя", "недели", "недель"}:
+        return start_date + timedelta(days=n * 7 - 1)
+    if unit in {"month", "months", "месяц", "месяца", "месяцев"}:
+        # Avoid dateutil dependency in service; approximate by month roll-forward.
+        month = start_date.month - 1 + n
+        year = start_date.year + month // 12
+        month = month % 12 + 1
+        import calendar
+        day = min(start_date.day, calendar.monthrange(year, month)[1])
+        return date(year, month, day) - timedelta(days=1)
+    return None
+
+
+def sync_medicine_course_need_fields(mc: MedicineCourse) -> None:
+    """Calculate cached demand fields from medicine course attributes."""
+    amount, unit = parse_dose_amount(getattr(mc, "dose", ""))
+    start = mc.start_date or datetime.now(TZ).date()
+    end = mc.end_date or calc_end_date_from_duration_value(start, mc.duration_value, mc.duration_unit)
+    if not end:
+        mc.planned_doses_count = 0
+        mc.planned_units_total = 0.0
+        return
+    # Approximate per-course count by recurrence interval. Exact per schedule row is still in schedules.
+    days = 0
+    cur = start
+    interval = max(1, int(getattr(mc, "recurrence_interval_days", 1) or 1))
+    while cur <= end:
+        if ((cur - start).days % interval) == 0:
+            days += 1
+        cur += timedelta(days=1)
+    mc.planned_doses_count = days
+    mc.planned_units_total = round(days * float(amount or 1), 3)
+
+
+async def rebuild_future_events_for_schedule(session: AsyncSession, schedule_id: int) -> None:
+    """Delete only future pending events for a schedule; keep taken/skipped history."""
+    now = datetime.now(TZ)
+    rows = (await session.execute(select(DoseEvent).where(
+        DoseEvent.schedule_id == schedule_id,
+        DoseEvent.status == "pending",
+        DoseEvent.due_at >= now,
+    ))).scalars().all()
+    for event in rows:
+        await session.delete(event)
+
+
+async def complete_expired_medicine_courses(session: AsyncSession) -> int:
+    """Automatically complete active medicine courses whose end date passed.
+
+    Completed courses and their schedule rules are deactivated. Already taken/skipped
+    dose_events are preserved; future pending events are removed.
+    """
+    today = datetime.now(TZ).date()
+    rows = (await session.execute(select(MedicineCourse).where(
+        MedicineCourse.active == True,  # noqa: E712
+        MedicineCourse.end_date.is_not(None),
+        MedicineCourse.end_date < today,
+    ))).scalars().all()
+    completed = 0
+    for mc in rows:
+        mc.active = False
+        mc.status = "completed"
+        scheds = (await session.execute(select(Schedule).where(Schedule.medicine_course_id == mc.id))).scalars().all()
+        for sched in scheds:
+            sched.active = False
+            await rebuild_future_events_for_schedule(session, sched.id)
+        completed += 1
+    return completed
+
+
+
 async def inventory_item_for_schedule(session: AsyncSession, sched: Schedule) -> InventoryItem | None:
     if getattr(sched, "inventory_item_id", None):
         item = (await session.execute(select(InventoryItem).where(
@@ -536,6 +626,7 @@ def schedule_applies_on_day(sched: Schedule, day: date) -> bool:
 
 
 async def ensure_events(session: AsyncSession, days_ahead: int = 14) -> None:
+    await complete_expired_medicine_courses(session)
     today = datetime.now(TZ).date()
     schedules = (await session.execute(select(Schedule).where(Schedule.active == True))).scalars().all()  # noqa: E712
     for sched in schedules:
@@ -733,12 +824,16 @@ async def mark_taken(
         actual_dt = local_dt(event.due_at.astimezone(TZ).date(), actual_time)
     else:
         actual_dt = datetime.now(TZ)
+    prev_status = event.status
     event.status = "taken"
     event.taken_at = actual_dt
     event.taken_by = tg_id
+    event.skipped_at = None
+    event.skipped_by = None
     event.postponed_until = None
     event.note = note
-    await adjust_inventory_for_event(session, event, -1)
+    if prev_status != "taken":
+        await adjust_inventory_for_event(session, event, -1)
     await session.commit()
     return event
 
@@ -747,9 +842,14 @@ async def mark_skipped(session: AsyncSession, event_id: int, tg_id: int, note: s
     event = await get_event(session, event_id)
     if not event:
         return None
+    prev_status = event.status
+    if prev_status == "taken":
+        await adjust_inventory_for_event(session, event, +1)
     event.status = "skipped"
     event.skipped_at = datetime.now(TZ)
     event.skipped_by = tg_id
+    event.taken_at = None
+    event.taken_by = None
     event.postponed_until = None
     event.note = note
     await session.commit()
@@ -760,7 +860,13 @@ async def snooze_event(session: AsyncSession, event_id: int, tg_id: int, minutes
     event = await get_event(session, event_id)
     if not event:
         return None
+    if event.status == "taken":
+        await adjust_inventory_for_event(session, event, +1)
     event.status = "pending"
+    event.taken_at = None
+    event.taken_by = None
+    event.skipped_at = None
+    event.skipped_by = None
     event.postponed_until = datetime.now(TZ) + timedelta(minutes=minutes or settings.snooze_minutes)
     event.last_reminded_at = event.postponed_until
     event.note = f"Отложено пользователем {tg_id}"
@@ -773,10 +879,15 @@ async def update_taken_time(session: AsyncSession, event_id: int, tg_id: int, ac
     event = await get_event(session, event_id)
     if not event:
         return None
+    prev_status = event.status
     event.status = "taken"
     event.taken_at = local_dt(event.due_at.astimezone(TZ).date(), actual_time)
     event.taken_by = tg_id
+    event.skipped_at = None
+    event.skipped_by = None
     event.postponed_until = None
+    if prev_status != "taken":
+        await adjust_inventory_for_event(session, event, -1)
     await session.commit()
     return event
 
@@ -793,6 +904,14 @@ async def set_event_status(
     event = await get_event(session, event_id)
     if not event:
         return None
+    prev_status = event.status
+
+    # Keep inventory idempotent when user changes status back/forth.
+    if prev_status == "taken" and status != "taken":
+        await adjust_inventory_for_event(session, event, +1)
+    elif prev_status != "taken" and status == "taken":
+        await adjust_inventory_for_event(session, event, -1)
+
     if status == "pending":
         event.status = "pending"
         event.taken_at = None
@@ -810,7 +929,6 @@ async def set_event_status(
         event.skipped_by = None
         event.postponed_until = None
         event.note = f"Статус изменен пользователем {tg_id}"
-        await adjust_inventory_for_event(session, event, -1)
     elif status == "skipped":
         event.status = "skipped"
         event.skipped_at = datetime.now(TZ)
@@ -863,7 +981,11 @@ async def update_schedule(
     sched.time_local = hhmm
     sched.label = label or hhmm
     sched.start_date = start_date
-    sched.end_date = end_date
+    if start_date and duration_value:
+        computed_end = calc_end_date_from_duration_value(start_date, duration_value, duration_unit)
+        sched.end_date = computed_end or end_date
+    else:
+        sched.end_date = end_date
     if recurrence_type is not None:
         sched.recurrence_type = recurrence_type or "daily"
     if recurrence_interval_days is not None:
@@ -893,7 +1015,7 @@ async def update_schedule(
             mc.name = med.name
             mc.dose = dose
             mc.start_date = start_date
-            mc.end_date = end_date
+            mc.end_date = sched.end_date
             mc.recurrence_type = sched.recurrence_type
             mc.recurrence_interval_days = sched.recurrence_interval_days
             mc.weekdays = sched.weekdays or ""
@@ -904,25 +1026,26 @@ async def update_schedule(
             mc.analogs = sched.analogs or ""
             mc.duration_value = duration_value
             mc.duration_unit = duration_unit or ""
+            mc.active = bool(sched.active)
+            mc.status = "active" if sched.active else ("completed" if mc.end_date and mc.end_date < datetime.now(TZ).date() else "draft")
+            sync_medicine_course_need_fields(mc)
     # A schedule that belongs to an assignment is a course row. It becomes active
     # automatically only when its start date is today/past; otherwise it is started
     # manually by the "Начать курс" action.
     if course_id:
-        sched.active = bool(start_date and start_date <= datetime.now(TZ).date())
+        today = datetime.now(TZ).date()
+        sched.active = bool(start_date and start_date <= today and not (sched.end_date and sched.end_date < today))
     else:
         sched.active = True
+    if getattr(sched, "medicine_course_id", None):
+        mc = (await session.execute(select(MedicineCourse).where(MedicineCourse.id == sched.medicine_course_id))).scalar_one_or_none()
+        if mc:
+            mc.active = bool(sched.active)
+            mc.status = "active" if sched.active else ("completed" if mc.end_date and mc.end_date < datetime.now(TZ).date() else "draft")
+            sync_medicine_course_need_fields(mc)
 
     # Старые будущие pending-события удаляем, чтобы пересоздать их по новому времени/курсу.
-    now = datetime.now(TZ)
-    old_pending = (await session.execute(
-        select(DoseEvent).where(
-            DoseEvent.schedule_id == schedule_id,
-            DoseEvent.status == "pending",
-            DoseEvent.due_at >= now,
-        )
-    )).scalars().all()
-    for event in old_pending:
-        await session.delete(event)
+    await rebuild_future_events_for_schedule(session, schedule_id)
     await session.commit()
     await ensure_events(session)
     return sched
