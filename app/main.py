@@ -368,7 +368,16 @@ async def health() -> dict[str, str]:
 
 @app.get("/app")
 async def mini_app() -> FileResponse:
-    return FileResponse("app/static/index.html")
+    # Telegram WebView can aggressively cache Mini App HTML/JS.
+    # No-store makes UI fixes appear immediately after deploy/reload.
+    return FileResponse(
+        "app/static/index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/api/me", response_class=ORJSONResponse)
