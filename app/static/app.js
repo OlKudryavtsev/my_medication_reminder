@@ -1085,28 +1085,62 @@
   }
 
 
-// ===== v52 calendar + compact notification UI overrides =====
+// ===== v53 calendar + collapsible notification UI overrides =====
 function renderWeekCalendar(){
   const root=document.getElementById('weekCalendar'); if(!root)return;
   ensureCalendarWeek();
   const today=ymdLocal(new Date());
-  const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-  const monthNames=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
-  const title=`${monthNames[calendarWeekStart.getMonth()]} ${calendarWeekStart.getFullYear()}`;
+  const dows=['П','В','С','Ч','П','С','В'];
   const days=Array.from({length:7},(_,i)=>{
     const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i);
     const ymd=ymdLocal(d);
     const classes=['dayChip'];
     if(ymd===selectedTodayDate) classes.push('active');
     if(ymd===today) classes.push('todayMark');
-    return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;
+    return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[i]}</span><span class="num">${d.getDate()}</span></button>`;
   }).join('');
-  root.innerHTML=`<div class="calendarHeader"><div class="calendarMonth">${title}</div><button class="todayMiniBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div><div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
+  root.innerHTML=`<div class="weekNav weekNavClean"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
 }
 function notifyToggle(member, profile, field, value, canManage){
   const disabled=canManage?'':'disabled';
   const cls=value?'on':'off';
-  return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyText">${notifyLabels[field]}</span><span class="notifyMark">✓</span></label>`;
+  return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyMark">✓</span><span class="notifyText">${notifyLabels[field]}</span></label>`;
+}
+function notificationPanelId(profileId, memberId){ return `np_${profileId}_${memberId}`; }
+function toggleNotifyPanel(id){
+  const el=document.getElementById(id); if(!el)return;
+  el.classList.toggle('collapsed');
+  const btn=document.querySelector(`[data-toggle-notify="${id}"]`);
+  if(btn) btn.textContent=el.classList.contains('collapsed')?'+' : '−';
+}
+function setAllNotifyPanels(open){
+  document.querySelectorAll('.notifyMemberPanel').forEach(el=>{
+    el.classList.toggle('collapsed', !open);
+    const btn=document.querySelector(`[data-toggle-notify="${el.id}"]`);
+    if(btn) btn.textContent=open?'−':'+';
+  });
+}
+async function loadNotificationSettings(){
+  const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';
+  try{
+    const families=await api('/api/notification-settings');
+    if(!families.length){root.innerHTML='<div class="empty">Семьи не найдены</div>';return}
+    root.innerHTML=families.map(f=>{
+      const can=!!f.can_manage;
+      const profiles=f.profiles||[];
+      const members=f.members||[];
+      const body=profiles.map(p=>{
+        const rows=members.map(m=>{
+          const st=(m.settings||{})[String(p.id)];
+          if(!st) return '';
+          const pid=notificationPanelId(p.id,m.id);
+          return `<div class="notifyMemberPanel collapsed" id="${pid}"><button type="button" class="notifyPanelHead" onclick="toggleNotifyPanel('${pid}')"><span><b>${escapeHtml(m.full_name||String(m.tg_id))}</b><small>${roleLabel(m.role)}</small></span><span class="notifyPanelProfile">${escapeHtml(profileLabel(p))}</span><span class="notifyPanelToggle" data-toggle-notify="${pid}">+</span></button><div class="notifyPanelBody"><div class="notifyToggles">${['reminders_enabled','taken_notifications','skipped_notifications','overdue_notifications','low_stock_notifications','daily_summary_enabled'].map(field=>notifyToggle(m,p,field,!!st[field],can)).join('')}</div></div></div>`;
+        }).join('');
+        return `<div class="notifyProfileV53"><div class="notifyProfileTitle">${profileLabel(p)}</div>${rows||'<div class="empty">Нет участников</div>'}</div>`;
+      }).join('');
+      return `<div class="card notifyFamily"><div class="notifyFamilyTop"><h2>${escapeHtml(f.name)}</h2><div class="notifyExpandBtns"><button onclick="setAllNotifyPanels(true)">Раскрыть</button><button onclick="setAllNotifyPanels(false)">Скрыть</button></div></div>${can?'':'<div class="readonlyNotice">Настройки может менять родитель/владелец семьи.</div>'}${body}</div>`;
+    }).join('') + `<div class="muted" style="font-size:12px;margin-top:10px">Настройки применяются к конкретному участнику и профилю. По умолчанию родители получают важные уведомления, ребенок — напоминания по своему профилю.</div>`;
+  }catch(e){root.innerHTML=`<div class="empty">Не удалось загрузить настройки уведомлений.<br><small>${escapeHtml(e.message||String(e))}</small></div>`;}
 }
 
   init();

@@ -189,6 +189,24 @@
 @media(max-width:420px){.weekNav{grid-template-columns:28px minmax(0,1fr) 28px!important;gap:4px!important}.weekDays{gap:3px!important}.dayChip{height:44px!important;min-height:44px!important;border-radius:13px!important}.dayChip .dow{font-size:10px!important}.dayChip .num{font-size:16px!important}.weekArrow{height:42px!important;min-height:42px!important;border-radius:12px!important}.calendarHeader{margin-bottom:5px!important}.todayMiniBtn{min-height:28px!important;padding:0 9px!important;font-size:11px!important}}
 .notifyProfile{margin-top:8px!important;padding-top:8px!important}.notifyProfileTitle{font-size:13px!important;margin-bottom:6px!important}.notifyMemberRow{padding:7px 0!important}.notifyMemberHead{font-size:12px!important;margin-bottom:6px!important}.notifyMemberHead span{font-size:10px!important;padding:2px 6px!important}.notifyToggles{display:grid!important;grid-template-columns:1fr 1fr!important;gap:6px!important}.notifyChoice{min-height:32px!important;border-radius:12px!important;padding:6px 7px!important;font-size:11px!important;gap:6px!important;font-weight:800!important}.notifyChoice .notifyMark{width:18px!important;height:18px!important;border-radius:6px!important;font-size:12px!important}.notifyChoice .notifyText{font-size:11px!important;line-height:1.1!important}.notifyFamily h2{font-size:18px!important;margin-bottom:6px!important}@media(max-width:360px){.notifyToggles{grid-template-columns:1fr!important}}
 
+
+/* ===== v53 calendar + notifications polish ===== */
+.weekStrip{padding-top:0!important}
+.weekNavClean{grid-template-columns:36px minmax(0,1fr) 36px!important;gap:6px!important;margin-top:0!important}
+.weekDays{width:100%!important;display:grid!important;grid-template-columns:repeat(7,1fr)!important;gap:5px!important}
+.dayChip{height:54px!important;min-height:54px!important;min-width:0!important;width:100%!important;border-radius:18px!important;background:var(--soft)!important;color:var(--text)!important;border:1px solid var(--line)!important;box-shadow:none!important;padding:4px 0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:2px!important;overflow:visible!important}
+.dayChip .dow{font-size:12px!important;line-height:1!important;font-weight:850!important;color:var(--muted)!important;display:block!important;min-height:12px!important}
+.dayChip .num{font-size:21px!important;line-height:1!important;font-weight:950!important;color:var(--text)!important;display:block!important;min-height:22px!important}
+.dayChip.todayMark:not(.active){background:rgba(255,160,16,.12)!important;border-color:rgba(255,160,16,.65)!important;color:#d17800!important}
+.dayChip.todayMark:not(.active) .dow,.dayChip.todayMark:not(.active) .num{color:#d17800!important}
+.dayChip.active{background:var(--brand)!important;border-color:var(--brand)!important;color:#fff!important;box-shadow:0 10px 20px rgba(45,127,249,.22)!important}
+.dayChip.active .dow,.dayChip.active .num{color:#fff!important}
+.weekArrow{height:52px!important;min-height:52px!important;border-radius:16px!important;background:var(--soft)!important;border:1px solid var(--line)!important;font-size:28px!important;font-weight:900!important;color:var(--muted)!important;padding:0!important}
+.calendarHeader,.calendarMonth,.todayMiniBtn,.weekTop,.weekMonthTitle{display:none!important}
+@media(max-width:420px){.weekNavClean{grid-template-columns:32px minmax(0,1fr) 32px!important;gap:4px!important}.weekDays{gap:4px!important}.dayChip{height:49px!important;min-height:49px!important;border-radius:15px!important}.dayChip .dow{font-size:11px!important}.dayChip .num{font-size:18px!important}.weekArrow{height:48px!important;min-height:48px!important;border-radius:14px!important;font-size:26px!important}}
+.notifyFamilyTop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.notifyFamilyTop h2{margin:0!important;font-size:18px!important}.notifyExpandBtns{display:flex;gap:6px}.notifyExpandBtns button{min-height:28px!important;border-radius:999px!important;padding:0 10px!important;font-size:11px!important;font-weight:850!important;background:var(--soft)!important;color:var(--brand)!important;border:1px solid rgba(47,128,237,.20)!important;box-shadow:none!important}
+.notifyProfileV53{margin-top:10px;border-top:1px solid rgba(127,127,127,.12);padding-top:9px}.notifyProfileTitle{font-size:12px!important;color:var(--muted)!important;text-transform:uppercase!important;letter-spacing:.06em!important;margin-bottom:7px!important;font-weight:900!important}.notifyMemberPanel{border:1px solid var(--line);border-radius:15px;background:var(--card);margin:7px 0;overflow:hidden}.notifyPanelHead{width:100%;border:0;background:var(--soft);min-height:44px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) 26px;align-items:center;gap:8px;text-align:left;padding:8px 10px;color:var(--text);box-shadow:none}.notifyPanelHead b{font-size:13px;line-height:1.05;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notifyPanelHead small{display:block;font-size:10px;color:var(--muted);margin-top:2px}.notifyPanelProfile{font-size:11px;color:var(--muted);font-weight:850;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notifyPanelToggle{width:24px;height:24px;border-radius:999px;background:var(--card);display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:18px;font-weight:900}.notifyPanelBody{padding:8px}.notifyMemberPanel.collapsed .notifyPanelBody{display:none}.notifyToggles{display:grid!important;grid-template-columns:1fr 1fr!important;gap:6px!important}.notifyChoice{min-height:30px!important;border-radius:11px!important;padding:5px 7px!important;font-size:11px!important;gap:6px!important;font-weight:850!important}.notifyChoice .notifyMark{order:0!important;width:17px!important;height:17px!important;border-radius:6px!important;font-size:11px!important;flex:none!important}.notifyChoice .notifyText{font-size:11px!important;line-height:1.1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}.notifyChoice.off .notifyMark{color:transparent!important;background:transparent!important;border:1px solid rgba(130,140,160,.35)!important}.notifyChoice.on{background:rgba(45,127,249,.12)!important;border-color:rgba(45,127,249,.45)!important;color:var(--brand)!important}.notifyChoice.on .notifyMark{background:var(--brand)!important;color:white!important;border-color:var(--brand)!important}
+@media(max-width:360px){.notifyToggles{grid-template-columns:1fr!important}.notifyPanelHead{grid-template-columns:minmax(0,1fr) 24px}.notifyPanelProfile{display:none}}
 </style>
 </head>
 <body>
@@ -1348,28 +1366,62 @@
   }
 
 
-// ===== v52 calendar + compact notification UI overrides =====
+// ===== v53 calendar + collapsible notification UI overrides =====
 function renderWeekCalendar(){
   const root=document.getElementById('weekCalendar'); if(!root)return;
   ensureCalendarWeek();
   const today=ymdLocal(new Date());
-  const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-  const monthNames=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
-  const title=`${monthNames[calendarWeekStart.getMonth()]} ${calendarWeekStart.getFullYear()}`;
+  const dows=['П','В','С','Ч','П','С','В'];
   const days=Array.from({length:7},(_,i)=>{
     const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i);
     const ymd=ymdLocal(d);
     const classes=['dayChip'];
     if(ymd===selectedTodayDate) classes.push('active');
     if(ymd===today) classes.push('todayMark');
-    return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;
+    return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[i]}</span><span class="num">${d.getDate()}</span></button>`;
   }).join('');
-  root.innerHTML=`<div class="calendarHeader"><div class="calendarMonth">${title}</div><button class="todayMiniBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div><div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
+  root.innerHTML=`<div class="weekNav weekNavClean"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
 }
 function notifyToggle(member, profile, field, value, canManage){
   const disabled=canManage?'':'disabled';
   const cls=value?'on':'off';
-  return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyText">${notifyLabels[field]}</span><span class="notifyMark">✓</span></label>`;
+  return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyMark">✓</span><span class="notifyText">${notifyLabels[field]}</span></label>`;
+}
+function notificationPanelId(profileId, memberId){ return `np_${profileId}_${memberId}`; }
+function toggleNotifyPanel(id){
+  const el=document.getElementById(id); if(!el)return;
+  el.classList.toggle('collapsed');
+  const btn=document.querySelector(`[data-toggle-notify="${id}"]`);
+  if(btn) btn.textContent=el.classList.contains('collapsed')?'+' : '−';
+}
+function setAllNotifyPanels(open){
+  document.querySelectorAll('.notifyMemberPanel').forEach(el=>{
+    el.classList.toggle('collapsed', !open);
+    const btn=document.querySelector(`[data-toggle-notify="${el.id}"]`);
+    if(btn) btn.textContent=open?'−':'+';
+  });
+}
+async function loadNotificationSettings(){
+  const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';
+  try{
+    const families=await api('/api/notification-settings');
+    if(!families.length){root.innerHTML='<div class="empty">Семьи не найдены</div>';return}
+    root.innerHTML=families.map(f=>{
+      const can=!!f.can_manage;
+      const profiles=f.profiles||[];
+      const members=f.members||[];
+      const body=profiles.map(p=>{
+        const rows=members.map(m=>{
+          const st=(m.settings||{})[String(p.id)];
+          if(!st) return '';
+          const pid=notificationPanelId(p.id,m.id);
+          return `<div class="notifyMemberPanel collapsed" id="${pid}"><button type="button" class="notifyPanelHead" onclick="toggleNotifyPanel('${pid}')"><span><b>${escapeHtml(m.full_name||String(m.tg_id))}</b><small>${roleLabel(m.role)}</small></span><span class="notifyPanelProfile">${escapeHtml(profileLabel(p))}</span><span class="notifyPanelToggle" data-toggle-notify="${pid}">+</span></button><div class="notifyPanelBody"><div class="notifyToggles">${['reminders_enabled','taken_notifications','skipped_notifications','overdue_notifications','low_stock_notifications','daily_summary_enabled'].map(field=>notifyToggle(m,p,field,!!st[field],can)).join('')}</div></div></div>`;
+        }).join('');
+        return `<div class="notifyProfileV53"><div class="notifyProfileTitle">${profileLabel(p)}</div>${rows||'<div class="empty">Нет участников</div>'}</div>`;
+      }).join('');
+      return `<div class="card notifyFamily"><div class="notifyFamilyTop"><h2>${escapeHtml(f.name)}</h2><div class="notifyExpandBtns"><button onclick="setAllNotifyPanels(true)">Раскрыть</button><button onclick="setAllNotifyPanels(false)">Скрыть</button></div></div>${can?'':'<div class="readonlyNotice">Настройки может менять родитель/владелец семьи.</div>'}${body}</div>`;
+    }).join('') + `<div class="muted" style="font-size:12px;margin-top:10px">Настройки применяются к конкретному участнику и профилю. По умолчанию родители получают важные уведомления, ребенок — напоминания по своему профилю.</div>`;
+  }catch(e){root.innerHTML=`<div class="empty">Не удалось загрузить настройки уведомлений.<br><small>${escapeHtml(e.message||String(e))}</small></div>`;}
 }
 
   init();
