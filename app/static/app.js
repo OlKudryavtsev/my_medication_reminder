@@ -13,7 +13,7 @@
   function closeModal(value=null){document.getElementById('modal').classList.add('hidden');if(modalResolver){modalResolver(value);modalResolver=null}}
   function closeModalByBackdrop(e){if(e.target.id==='modal')closeModal(null)}
   function modalSubmit(){if(window.__modalSubmit)window.__modalSubmit();else closeModal(true)}
-  function openModal(title, bodyHtml, submitFn, okText='Сохранить'){document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=bodyHtml;document.getElementById('modalOk').textContent=okText;document.getElementById('modal').classList.remove('hidden');window.__modalSubmit=submitFn;return new Promise(resolve=>{modalResolver=resolve})}
+  function openModal(title, bodyHtml, submitFn, okText='Сохранить'){document.getElementById('modalTitle').textContent=title;document.getElementById('modalBody').innerHTML=bodyHtml;const modalOk=document.getElementById('modalOk');const actions=document.querySelector('#modal .modalActions');modalOk.textContent=okText||'';if(actions)actions.classList.toggle('hidden', okText==='');document.getElementById('modal').classList.remove('hidden');window.__modalSubmit=submitFn;return new Promise(resolve=>{modalResolver=resolve})}
   async function chooseTime(title, current){
     const value=(current || new Date().toTimeString().slice(0,5));
     return await openModal(title, `<label>Время</label><input id="modalTime" type="time" value="${escapeHtml(value)}">`, ()=>closeModal(document.getElementById('modalTime').value));
@@ -207,14 +207,38 @@
     sel.innerHTML='<option value="">Выберите лекарство</option>'+names.map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
     if(current && names.includes(current)) sel.value=current;
   }
+  async function fetchProtectedBlob(url){
+    const res=await fetch(url,{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});
+    if(!res.ok)throw new Error(await res.text());
+    return await res.blob();
+  }
+  async function downloadUrl(url, filename='file') {
+    try{
+      const blob=await fetchProtectedBlob(url);
+      const objectUrl=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=objectUrl; a.download=filename||'file'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(objectUrl),3000);
+    }catch(e){toast('Не удалось скачать файл');console.error(e)}
+  }
+  function attachmentButtons(a){
+    const url=attachmentUrl(a.id); const name=escapeAttr(a.filename||'Файл'); const img=isImageFilename(a.filename||'');
+    return `<div class="attachmentRow attachmentCompact"><button class="fileChip" onclick="openFilePreview('${url}', '${name}', ${img})"><span class="fileIcon">${img?'🖼️':'📎'}</span><span class="fileName">${escapeHtml(a.filename||'Файл')}</span></button><button class="fileIconBtn" aria-label="Скачать" onclick="downloadUrl('${url}', '${name}')">⇩</button></div>`;
+  }
   function attachmentUrl(id){return `/api/attachments/${id}?profile_id=${currentProfileId||''}`}
   function inventoryPhotoUrl(i){return `${i.photo_url}?profile_id=${currentProfileId||''}&t=${Date.now()}`}
-  function openFilePreview(url, filename='', isImage=false){
-    const safeUrl=escapeAttr(url); const safeName=escapeHtml(filename||'Файл');
-    const body=isImage
-      ? `<img class="mediaPreview" src="${safeUrl}" alt="${safeName}">`
-      : `<div class="filePreviewBox"><div style="font-weight:900;margin-bottom:8px">${safeName}</div><a href="${safeUrl}" target="_blank" rel="noopener">Открыть файл</a></div>`;
-    return openModal(safeName, body, ()=>closeModal(true), 'Закрыть');
+  async function openFilePreview(url, filename='', isImage=false){
+    try{
+      const blob=await fetchProtectedBlob(url);
+      const objectUrl=URL.createObjectURL(blob);
+      const safeName=escapeHtml(filename||'Файл');
+      const dlName=escapeAttr(filename||'file');
+      const body=`<button class="modalCloseX" onclick="closeModal(false)">×</button><button class="modalDownloadIcon" aria-label="Скачать" onclick="downloadUrl('${escapeAttr(url)}','${dlName}')">⇩</button>` + (isImage
+        ? `<img class="mediaPreview" src="${objectUrl}" alt="${safeName}">`
+        : `<div class="filePreviewBox"><div style="font-weight:900;margin-bottom:8px">${safeName}</div><a class="fileLinkBtn small" href="${objectUrl}" target="_blank" rel="noopener">Открыть файл</a></div>`);
+      const promise=openModal(safeName, body, ()=>closeModal(true), '');
+      promise.finally(()=>setTimeout(()=>URL.revokeObjectURL(objectUrl),1000));
+      return promise;
+    }catch(e){toast('Не удалось открыть файл');console.error(e)}
   }
   function isImageFilename(name=''){return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name)}
 
@@ -579,7 +603,7 @@
     if(selected)rows=rows.filter(i=>(i.name||'')===selected);
     const root=document.getElementById('inventoryBox');
     if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
-    root.innerHTML=`<div class="adminList">${rows.map(i=>`<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div><div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div></div>`).join('')}</div>`;
+    root.innerHTML=`<div class="adminList">${rows.map(i=>`<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<div class="attachmentRow attachmentCompact"><button class="fileChip" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)"><span class="fileIcon">🖼️</span><span class="fileName">Фото лекарства</span></button><button class="fileIconBtn" aria-label="Скачать" onclick="downloadUrl('${inventoryPhotoUrl(i)}', '${escapeAttr(i.name)}.jpg')">⇩</button></div>`:''}</div><div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div></div>`).join('')}</div>`;
   }
   async function addInventory(){const name=document.getElementById('invName').value;if(!name){toast('Выберите лекарство из списка');return}const res=await api('/api/inventory',{method:'POST',body:JSON.stringify({name,quantity:Number(document.getElementById('invQty').value||0),unit_name:document.getElementById('invUnit').value||'шт',low_threshold:Number(document.getElementById('invThreshold').value||0)})});const file=document.getElementById('invPhoto').files[0];if(file)await uploadInventoryPhoto(res.id,file,false);document.getElementById('invName').value='';document.getElementById('invPhoto').value='';document.getElementById('invQty').value='0';toast('Добавлено в аптечку');addInventoryOpen=false;document.getElementById('addInventoryForm')?.classList.add('hidden');setCollapseButton('addInventoryToggle', false, 'Скрыть форму добавления', 'Добавить в аптечку');await loadInventory();await loadAudit()}
   async function editInventory(id,name,qty,unit,thr){const body=`<label>Лекарство</label><input id="eiName" value="${name}" readonly><label>Остаток</label><input id="eiQty" type="number" min="0" value="${qty}"><label>Ед. изм.</label><input id="eiUnit" value="${unit}"><label>Напомнить при</label><input id="eiThr" type="number" min="0" value="${thr}">`;const ok=await openModal('Изменить запас', body, ()=>closeModal({name:document.getElementById('eiName').value.trim(),quantity:Number(document.getElementById('eiQty').value||0),unit_name:document.getElementById('eiUnit').value||'шт',low_threshold:Number(document.getElementById('eiThr').value||0)}));if(!ok)return;await api('/api/inventory/'+id,{method:'PUT',body:JSON.stringify(ok)});toast('Запас обновлен');await loadInventory();await loadAudit()}
@@ -1033,7 +1057,7 @@
     const manageBox=document.getElementById('inventoryManageBox'); if(manageBox) manageBox.classList.toggle('hidden', !canManage());
     const root=document.getElementById('inventoryBox');
     if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
-    root.innerHTML=`<div class="adminList">${rows.map(i=>{const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div>`:'';return `<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div>${manage}</div>`}).join('')}</div>`;
+    root.innerHTML=`<div class="adminList">${rows.map(i=>{const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div>`:'';return `<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<div class="attachmentRow attachmentCompact"><button class="fileChip" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)"><span class="fileIcon">🖼️</span><span class="fileName">Фото лекарства</span></button><button class="fileIconBtn" aria-label="Скачать" onclick="downloadUrl('${inventoryPhotoUrl(i)}', '${escapeAttr(i.name)}.jpg')">⇩</button></div>`:''}</div>${manage}</div>`}).join('')}</div>`;
   }
 
   async function loadStats(){
