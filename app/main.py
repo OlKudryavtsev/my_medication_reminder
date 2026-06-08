@@ -49,6 +49,7 @@ from .service import (
     set_active_profile,
     is_profile_manager,
     profile_recipients,
+    ensure_notification_setting,
     create_child_profile,
     update_profile_name,
     deactivate_profile,
@@ -156,6 +157,17 @@ class FamilyInvitePayload(BaseModel):
 class FamilyMemberPayload(BaseModel):
     role: str
     linked_profile_id: int | None = None
+
+
+class NotificationSettingPayload(BaseModel):
+    family_member_id: int
+    profile_id: int
+    reminders_enabled: bool = False
+    taken_notifications: bool = False
+    skipped_notifications: bool = False
+    overdue_notifications: bool = False
+    low_stock_notifications: bool = False
+    daily_summary_enabled: bool = False
 
 
 class CoursePayload(BaseModel):
@@ -298,7 +310,7 @@ async def reminder_tick() -> None:
                 text = group_reminder_text(events)
                 keyboard = group_take_keyboard(group_key)
 
-            for chat_id in await profile_recipients(session, profile_id):
+            for chat_id in await profile_recipients(session, profile_id, "reminder"):
                 try:
                     await bot.send_message(chat_id, text, reply_markup=keyboard)
                 except Exception:
@@ -326,7 +338,8 @@ async def overdue_alert_tick() -> None:
                     e.overdue_alert_sent_at = now
                 continue
             text = overdue_alert_text(rows)
-            for parent_id in settings.parents:
+            recipients = await profile_recipients(session, profile_id, "overdue")
+            for parent_id in recipients:
                 try:
                     await bot.send_message(parent_id, text)
                 except Exception:
@@ -344,10 +357,7 @@ async def low_stock_tick() -> None:
             profile = (await session.execute(select(Profile).where(Profile.id == item.profile_id))).scalar_one_or_none()
             if not profile:
                 continue
-            if profile.kind == "personal" and profile.owner_tg_id:
-                recipients = [int(profile.owner_tg_id)]
-            else:
-                recipients = settings.parents
+            recipients = await profile_recipients(session, item.profile_id, "low_stock")
             text = f"🛒 Нужно купить лекарство\n{item.name}: осталось {item.quantity} {item.unit_name or 'шт'}\nПорог напоминания: {item.low_threshold}"
             for chat_id in recipients:
                 try:
@@ -369,7 +379,7 @@ async def evening_summary_tick() -> None:
             if profile.kind == "personal" and profile.owner_tg_id:
                 recipients = [int(profile.owner_tg_id)]
             else:
-                recipients = await profile_recipients(session, profile.id)
+                recipients = await profile_recipients(session, profile.id, "daily_summary")
             for chat_id in recipients:
                 try:
                     await bot.send_message(chat_id, text)
@@ -646,6 +656,98 @@ async def api_delete_family_invite(invite_id: int, request: Request):
         inv.active = False
         await session.commit()
         return {"ok": True}
+
+
+
+@app.get("/api/notification-settings", response_class=ORJSONResponse)
+async def api_notification_settings(request: Request):
+    """Return notification matrix for families where current user is a member.
+
+    Rows are per family member x profile. Settings are created lazily using role defaults,
+    so the UI can render stable toggles for every participant and profile.
+    """
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        my_members = (await session.execute(
+            select(FamilyMember, Family).join(Family, Family.id == FamilyMember.family_id).where(
+                FamilyMember.user_id == user.id,
+                FamilyMember.active == True,
+                Family.active == True,
+            ).order_by(Family.id)
+        )).all()
+        result=[]
+        for my_member, fam in my_members:
+            profiles = list((await session.execute(select(Profile).where(Profile.family_id == fam.id, Profile.active == True).order_by(Profile.kind, Profile.name))).scalars().all())
+            members = (await session.execute(
+                select(FamilyMember, User).join(User, User.id == FamilyMember.user_id).where(
+                    FamilyMember.family_id == fam.id,
+                    FamilyMember.active == True,
+                ).order_by(FamilyMember.role, User.full_name)
+            )).all()
+            member_rows=[]
+            for mem, u in members:
+                settings_by_profile={}
+                for prof in profiles:
+                    # Only linked profile is relevant for child/viewer; parent/owner can be configured for any profile.
+                    if mem.role in {"child", "viewer"} and mem.linked_profile_id and mem.linked_profile_id != prof.id:
+                        continue
+                    st = await ensure_notification_setting(session, mem, prof)
+                    settings_by_profile[str(prof.id)] = {
+                        "id": st.id,
+                        "reminders_enabled": st.reminders_enabled,
+                        "taken_notifications": st.taken_notifications,
+                        "skipped_notifications": st.skipped_notifications,
+                        "overdue_notifications": st.overdue_notifications,
+                        "low_stock_notifications": st.low_stock_notifications,
+                        "daily_summary_enabled": st.daily_summary_enabled,
+                    }
+                member_rows.append({
+                    "id": mem.id,
+                    "tg_id": u.tg_id,
+                    "full_name": u.full_name,
+                    "role": mem.role,
+                    "linked_profile_id": mem.linked_profile_id,
+                    "settings": settings_by_profile,
+                })
+            result.append({
+                "id": fam.id,
+                "name": fam.name,
+                "role": my_member.role,
+                "can_manage": my_member.role in {"owner", "parent"},
+                "profiles": [{"id": p.id, "name": p.name, "kind": p.kind} for p in profiles],
+                "members": member_rows,
+            })
+        await session.commit()
+        return result
+
+
+@app.put("/api/notification-settings", response_class=ORJSONResponse)
+async def api_update_notification_settings(payload: NotificationSettingPayload, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        member = (await session.execute(select(FamilyMember).where(FamilyMember.id == payload.family_member_id, FamilyMember.active == True))).scalar_one_or_none()
+        profile = (await session.execute(select(Profile).where(Profile.id == payload.profile_id, Profile.active == True))).scalar_one_or_none()
+        if not member or not profile or member.family_id != profile.family_id:
+            raise HTTPException(status_code=404, detail="Member/profile not found")
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == member.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family management access")
+        st = await ensure_notification_setting(session, member, profile)
+        st.reminders_enabled = bool(payload.reminders_enabled)
+        st.taken_notifications = bool(payload.taken_notifications)
+        st.skipped_notifications = bool(payload.skipped_notifications)
+        st.overdue_notifications = bool(payload.overdue_notifications)
+        st.low_stock_notifications = bool(payload.low_stock_notifications)
+        st.daily_summary_enabled = bool(payload.daily_summary_enabled)
+        await session.commit()
+        return {"ok": True, "id": st.id}
 
 
 @app.post("/api/active-profile")
@@ -1133,7 +1235,7 @@ async def api_batch_take(payload: BatchEventPayload, request: Request):
     if taken_events:
         actual = taken_events[0].taken_at.astimezone(TZ).strftime("%H:%M") if taken_events[0].taken_at else ""
         async with SessionLocal() as session:
-            recipients = await profile_recipients(session, taken_events[0].schedule.profile_id)
+            recipients = await profile_recipients(session, taken_events[0].schedule.profile_id, "taken")
         lines = "\n".join(f"• {event_title(e)}" for e in taken_events)
         for parent_id in recipients:
             if parent_id != tg_id:
@@ -1161,7 +1263,7 @@ async def api_batch_skip(payload: BatchEventPayload, request: Request):
         await log_action(session, profile_id, tg_id, "group_skipped", "dose_event", skipped[0].id if skipped else None, f"Групповой пропуск: {len(skipped)} прием(а)", commit=True)
     if skipped:
         async with SessionLocal() as session:
-            recipients = await profile_recipients(session, skipped[0].schedule.profile_id)
+            recipients = await profile_recipients(session, skipped[0].schedule.profile_id, "skipped")
         text = skipped_notification_text(skipped)
         for parent_id in recipients:
             if parent_id != tg_id:
@@ -1203,7 +1305,7 @@ async def api_take(event_id: int, payload: TakePayload, request: Request):
     text = thanks_text(event.id)
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else ""
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, event.schedule.profile_id)
+        recipients = await profile_recipients(session, event.schedule.profile_id, "taken")
     for parent_id in recipients:
         if parent_id != tg_id:
             try:
@@ -1228,7 +1330,7 @@ async def api_update_taken_time(event_id: int, payload: TakePayload, request: Re
         raise HTTPException(status_code=404, detail="Event not found")
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else payload.actual_time
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, event.schedule.profile_id)
+        recipients = await profile_recipients(session, event.schedule.profile_id, "taken")
     for parent_id in recipients:
         if parent_id != tg_id:
             try:
@@ -1259,7 +1361,7 @@ async def api_update_event_status(event_id: int, payload: StatusPayload, request
     label = {"pending": "не принято", "taken": "принято", "skipped": "пропущено"}[status]
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else ""
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, event.schedule.profile_id)
+        recipients = await profile_recipients(session, event.schedule.profile_id, "taken" if status == "taken" else "skipped" if status == "skipped" else "reminder")
     for parent_id in recipients:
         if parent_id != tg_id:
             try:
@@ -1281,7 +1383,7 @@ async def api_skip(event_id: int, payload: EventActionPayload, request: Request)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, event.schedule.profile_id)
+        recipients = await profile_recipients(session, event.schedule.profile_id, "skipped")
     for parent_id in recipients:
         if parent_id != tg_id:
             try:

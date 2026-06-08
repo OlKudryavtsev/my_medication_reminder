@@ -216,26 +216,94 @@ async def is_profile_manager(session: AsyncSession, tg_id: int, role: str, profi
     return bool(member)
 
 
-async def profile_recipients(session: AsyncSession, profile_id: int) -> list[int]:
+def default_notification_value(member: FamilyMember, profile: Profile, field: str) -> bool:
+    """Role-based defaults used when an explicit row does not exist yet."""
+    role = (member.role or "").lower()
+    is_linked_child = role == "child" and member.linked_profile_id == profile.id
+    is_parent = role in {"owner", "parent"}
+    is_viewer = role == "viewer"
+    is_personal_owner = profile.kind == "personal" and profile.owner_tg_id
+
+    if is_personal_owner:
+        # Personal profile notifications go only to the profile owner by default.
+        return True if is_parent or member.linked_profile_id == profile.id else False
+    if field == "reminders_enabled":
+        return is_parent or is_linked_child
+    if field == "taken_notifications":
+        return is_parent
+    if field == "skipped_notifications":
+        return is_parent
+    if field == "overdue_notifications":
+        return is_parent
+    if field == "low_stock_notifications":
+        return is_parent
+    if field == "daily_summary_enabled":
+        return is_parent or is_viewer
+    return False
+
+
+async def ensure_notification_setting(session: AsyncSession, member: FamilyMember, profile: Profile) -> NotificationSetting:
+    row = (await session.execute(select(NotificationSetting).where(
+        NotificationSetting.family_member_id == member.id,
+        NotificationSetting.profile_id == profile.id,
+    ))).scalar_one_or_none()
+    if row:
+        return row
+    row = NotificationSetting(
+        family_member_id=member.id,
+        profile_id=profile.id,
+        reminders_enabled=default_notification_value(member, profile, "reminders_enabled"),
+        taken_notifications=default_notification_value(member, profile, "taken_notifications"),
+        skipped_notifications=default_notification_value(member, profile, "skipped_notifications"),
+        overdue_notifications=default_notification_value(member, profile, "overdue_notifications"),
+        low_stock_notifications=default_notification_value(member, profile, "low_stock_notifications"),
+        daily_summary_enabled=default_notification_value(member, profile, "daily_summary_enabled"),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+_NOTIFICATION_FIELD = {
+    "reminder": "reminders_enabled",
+    "taken": "taken_notifications",
+    "skipped": "skipped_notifications",
+    "overdue": "overdue_notifications",
+    "low_stock": "low_stock_notifications",
+    "daily_summary": "daily_summary_enabled",
+}
+
+
+async def profile_recipients(session: AsyncSession, profile_id: int, kind: str = "reminder") -> list[int]:
     profile = (await session.execute(select(Profile).where(Profile.id == profile_id))).scalar_one_or_none()
     if not profile:
         return []
-    if profile.kind == "personal" and profile.owner_tg_id:
-        return [int(profile.owner_tg_id)]
-    # Family-based recipients: child linked to the profile + parents/owners in the family.
+    field = _NOTIFICATION_FIELD.get(kind, "reminders_enabled")
+
     rows = (await session.execute(
         select(FamilyMember, User).join(User, User.id == FamilyMember.user_id).where(
             FamilyMember.family_id == profile.family_id,
             FamilyMember.active == True,
-            or_(FamilyMember.role.in_(["owner", "parent"]), FamilyMember.linked_profile_id == profile.id),
         )
     )).all()
-    recipients = [int(user.tg_id) for _member, user in rows if user and user.tg_id]
-    # Backward-compatible fallback for the migrated default family.
-    if not recipients:
-        if settings.child:
-            recipients.append(settings.child)
-        recipients.extend(settings.parents)
+    recipients: list[int] = []
+    for member, user in rows:
+        if not user or not user.tg_id:
+            continue
+        # Child/viewer get only notifications for the linked profile. Parents/owners can be configured for every profile.
+        if member.role in {"child", "viewer"} and member.linked_profile_id != profile.id:
+            continue
+        setting = await ensure_notification_setting(session, member, profile)
+        if bool(getattr(setting, field, False)):
+            recipients.append(int(user.tg_id))
+    # Backward-compatible fallback for the migrated default family only if settings are not present yet.
+    if not recipients and kind == "reminder":
+        if profile.kind == "personal" and profile.owner_tg_id:
+            recipients.append(int(profile.owner_tg_id))
+        else:
+            if settings.child:
+                recipients.append(settings.child)
+            recipients.extend(settings.parents)
     return list(dict.fromkeys(recipients))
 
 

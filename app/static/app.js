@@ -49,6 +49,7 @@
     if(!profiles.some(p=>p.id===currentProfileId)) currentProfileId = profiles[0].id;
     renderProfileChips();
   }
+
   async function changeProfile(profileId){
     currentProfileId=Number(profileId);
     localStorage.setItem('activeProfileId', String(currentProfileId));
@@ -917,6 +918,7 @@
     if(name==='family') loadFamilyBox();
     if(name==='profiles') loadProfileAdmin();
     if(name==='audit') loadAudit();
+    if(name==='notify') loadNotificationSettings();
   }
   function showTab(name){
     ['today','assignments','inventory','analytics','more'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});
@@ -1001,6 +1003,50 @@
     root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`;
   }
 
+
+
+  const notifyLabels={
+    reminders_enabled:'напоминания',
+    taken_notifications:'принято',
+    skipped_notifications:'пропуски',
+    overdue_notifications:'просрочки',
+    low_stock_notifications:'аптечка',
+    daily_summary_enabled:'вечерний итог'
+  };
+  function roleLabel(r){return {owner:'Владелец',parent:'Родитель',child:'Ребенок',viewer:'Просмотр'}[r]||r;}
+  function profileLabel(p){return `${escapeHtml(p.name)}${p.kind==='personal'?' · личный':' · ребенок'}`;}
+  function notifyToggle(member, profile, field, value, canManage){
+    const disabled=canManage?'':'disabled';
+    return `<label class="notifyToggle ${value?'on':''}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span>${notifyLabels[field]}</span></label>`;
+  }
+  async function loadNotificationSettings(){
+    const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';
+    try{
+      const families=await api('/api/notification-settings');
+      if(!families.length){root.innerHTML='<div class="empty">Семьи не найдены</div>';return}
+      root.innerHTML=families.map(f=>{
+        const can=!!f.can_manage;
+        const profiles=f.profiles||[];
+        const members=f.members||[];
+        const body=profiles.map(p=>{
+          const rows=members.map(m=>{
+            const st=(m.settings||{})[String(p.id)];
+            if(!st) return '';
+            return `<div class="notifyMemberRow"><div class="notifyMemberHead"><b>${escapeHtml(m.full_name||String(m.tg_id))}</b><span>${roleLabel(m.role)}</span></div><div class="notifyToggles">${['reminders_enabled','taken_notifications','skipped_notifications','overdue_notifications','low_stock_notifications','daily_summary_enabled'].map(field=>notifyToggle(m,p,field,!!st[field],can)).join('')}</div></div>`;
+          }).join('');
+          return `<div class="notifyProfile"><div class="notifyProfileTitle">${profileLabel(p)}</div>${rows||'<div class="empty">Нет участников</div>'}</div>`;
+        }).join('');
+        return `<div class="card notifyFamily"><h2>${escapeHtml(f.name)}</h2>${can?'':'<div class="readonlyNotice">Настройки может менять родитель/владелец семьи.</div>'}${body}</div>`;
+      }).join('') + `<div class="muted" style="font-size:12px;margin-top:10px">Настройки применяются к конкретному участнику и профилю. По умолчанию родители получают все важные уведомления, ребенок — напоминания по своему профилю.</div>`;
+    }catch(e){root.innerHTML=`<div class="empty">Не удалось загрузить настройки уведомлений.<br><small>${escapeHtml(e.message||String(e))}</small></div>`;}
+  }
+  async function saveNotificationSetting(memberId, profileId){
+    const inputs=[...document.querySelectorAll(`input[data-member="${memberId}"][data-profile="${profileId}"]`)];
+    const payload={family_member_id:memberId,profile_id:profileId};
+    inputs.forEach(i=>payload[i.dataset.field]=i.checked);
+    try{await api('/api/notification-settings',{method:'PUT',body:JSON.stringify(payload)}); toast('Настройки сохранены');}
+    catch(e){toast('Не удалось сохранить: '+(e.message||e)); await loadNotificationSettings();}
+  }
 
   async function changeProfile(profileId){
     currentProfileId=profileId; localStorage.setItem('activeProfileId',String(profileId));

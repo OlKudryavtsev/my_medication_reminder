@@ -476,7 +476,7 @@ async def take_group(callback: CallbackQuery) -> None:
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {actual}"
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+        recipients = await profile_recipients(session, events[0].schedule.profile_id, "taken")
     for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
@@ -525,7 +525,7 @@ async def take_group_manual_time(message: Message, state: FSMContext) -> None:
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"✅ {who} отметил групповой прием ({len(events)}):\n{meds}\nФактическое время: {hhmm}"
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+        recipients = await profile_recipients(session, events[0].schedule.profile_id, "taken")
     for parent_id in recipients:
         if parent_id != message.from_user.id:
             try:
@@ -550,7 +550,7 @@ async def skip_group(callback: CallbackQuery) -> None:
     meds = "\n".join(f"• {event_title(e)}" for e in events)
     notify = f"⏭️ {who} отметил групповой пропуск ({len(events)}):\n{meds}"
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, events[0].schedule.profile_id)
+        recipients = await profile_recipients(session, events[0].schedule.profile_id, "skipped")
     for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
@@ -617,7 +617,7 @@ async def take(callback: CallbackQuery) -> None:
     actual = event.taken_at.astimezone(TZ).strftime("%H:%M") if event.taken_at else datetime.now(TZ).strftime("%H:%M")
     notify = f"✅ {who} отметил прием: {event_title(event)}\nФактическое время: {actual}"
     async with SessionLocal() as session:
-        recipients = await profile_recipients(session, event.schedule.profile_id)
+        recipients = await profile_recipients(session, event.schedule.profile_id, "taken")
     for parent_id in recipients:
         if parent_id != callback.from_user.id:
             try:
