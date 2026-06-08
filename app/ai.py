@@ -89,6 +89,8 @@ MEDICINE_SCHEMA_PROMPT = """
       "meals": ["breakfast","lunch","dinner"],
       "times": ["HH:MM"],
       "comment": "комментарий",
+      "duration_value": 14,
+      "duration_unit": "days|weeks|months или пусто",
       "start_date": "YYYY-MM-DD или пусто",
       "end_date": "YYYY-MM-DD или пусто"
     }
@@ -97,6 +99,14 @@ MEDICINE_SCHEMA_PROMPT = """
 Если частота 3 раза в день и привязка к еде, meals обычно breakfast/lunch/dinner. Для 2 раз в день — breakfast/dinner, если явно не указано иное.
 Если указано «до еды» — before_meal, «во время еды» — with_meal, «после еды» — after_meal.
 Если в назначении несколько препаратов, верни их все в medicines. Не выбирай один препарат вместо списка.
+
+Правила интерпретации дозировки и частоты:
+- Если написано «6 таб в день», «6 таблеток в день», «6 раз в день», это НЕ одна доза 6 таблеток. Верни dose = "1 таб", frequency_count = 6, frequency_unit = "day", если явно не сказано «6 таблеток за один прием».
+- Если написано «по 1 таб 3 раза в день», dose = "1 таб", frequency_count = 3.
+- Если написано «2 дозы в каждую половину носа 3 раза в день», dose = "2 дозы в каждую половину носа", frequency_count = 3, administration_route = "в нос".
+- Если написано «на ночь», timing_template = "fixed", times = ["21:00"], comment = "на ночь".
+- Если написано «10 дней», «14 дней», «1 мес», заполни duration_value/duration_unit.
+- Не объединяй несколько препаратов и не отбрасывай строки: каждая строка назначения должна стать отдельным элементом medicines.
 """
 
 
