@@ -747,8 +747,11 @@
     ensureCalendarWeek();
     const today=ymdLocal(new Date());
     const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-    const days=Array.from({length:7},(_,i)=>{const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i); const ymd=ymdLocal(d); return `<button class="dayChip ${ymd===selectedTodayDate?'active':''} ${ymd===today?'todayMark':''}" onclick="selectTodayDate('${ymd}')"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
-    root.innerHTML=`<div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button><button class="todayQuickBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div>`;
+    const monthNames=['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+    const end=new Date(calendarWeekStart); end.setDate(calendarWeekStart.getDate()+6);
+    const title = `${calendarWeekStart.getDate()} ${monthNames[calendarWeekStart.getMonth()]} — ${end.getDate()} ${monthNames[end.getMonth()]}`;
+    const days=Array.from({length:7},(_,i)=>{const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i); const ymd=ymdLocal(d); const classes=['dayChip']; if(ymd===selectedTodayDate)classes.push('active'); if(ymd===today)classes.push('todayMark'); return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
+    root.innerHTML=`<div class="weekTop"><div class="weekMonthTitle">${title}</div><button class="todayMiniBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div><div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
   }
   async function shiftWeek(delta){ensureCalendarWeek(); calendarWeekStart.setDate(calendarWeekStart.getDate()+delta*7); renderWeekCalendar();}
   async function goTodayDate(){selectedTodayDate=ymdLocal(new Date()); calendarWeekStart=weekStartMonday(parseYmdLocal(selectedTodayDate)); await loadToday();}
@@ -1017,7 +1020,8 @@
   function profileLabel(p){return (p.kind==='personal'?'👤 ':'👶 ') + (p.name||'Профиль');}
   function notifyToggle(member, profile, field, value, canManage){
     const disabled=canManage?'':'disabled';
-    return `<label class="notifyToggle ${value?'on':''}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="this.closest('.notifyToggle')?.classList.toggle('on', this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span>${notifyLabels[field]}</span></label>`;
+    const cls=value?'on':'off';
+    return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyText">${notifyLabels[field]}</span><span class="notifyMark">✓</span></label>`;
   }
   async function loadNotificationSettings(){
     const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';

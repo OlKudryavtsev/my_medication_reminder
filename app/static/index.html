@@ -137,6 +137,36 @@
 .notifyFamily{margin-bottom:12px}.notifyProfile{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.notifyProfileTitle{font-weight:800;font-size:14px;margin-bottom:8px}.notifyMemberRow{padding:9px 0;border-top:1px solid rgba(127,127,127,.12)}.notifyMemberRow:first-of-type{border-top:0}.notifyMemberHead{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:7px}.notifyMemberHead span{font-size:11px;color:var(--muted);background:rgba(127,127,127,.09);padding:3px 7px;border-radius:999px}.notifyToggles{display:grid;grid-template-columns:1fr 1fr;gap:6px}.notifyToggle{min-height:34px;border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;gap:7px;padding:6px 8px;font-size:12px;background:var(--soft);color:var(--muted);font-weight:750}.notifyToggle input{width:16px;height:16px;accent-color:var(--brand);flex:none}.notifyToggle.on{border-color:rgba(45,127,249,.55);background:var(--brand2);color:var(--brand);box-shadow:inset 0 0 0 1px rgba(45,127,249,.12)}.notifyToggle input:disabled+span{opacity:.65}
     @media(max-width:420px){.scheduleMiniCard{grid-template-columns:88px minmax(0,1fr)!important}.weekNav{grid-template-columns:26px minmax(0,1fr) 26px auto;gap:4px}.weekArrow{padding:0}.todayQuickBtn{font-size:11px;padding:0 6px}.dayChip{height:40px}.dayChip .num{font-size:15px}}
 .twoTabs{grid-template-columns:1fr 1fr}.readonlyNotice{font-size:12px;color:var(--muted);margin:8px 0}.manageOnly.hiddenByRole{display:none!important}
+
+/* ===== v51 calendar + notifications polish ===== */
+.weekStrip{margin-bottom:10px}
+.weekTop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.weekMonthTitle{font-size:12px;font-weight:850;color:var(--muted);padding-left:2px}
+.todayMiniBtn{min-height:28px;border-radius:999px;padding:0 10px;border:1px solid var(--line);background:var(--soft);color:var(--brand);font-weight:850;font-size:12px;box-shadow:none;white-space:nowrap}
+.todayMiniBtn.active{background:var(--brand);color:white;border-color:var(--brand)}
+.weekNav{display:grid!important;grid-template-columns:30px minmax(0,1fr) 30px!important;gap:6px!important;align-items:center}
+.weekArrow{min-height:42px!important;border-radius:14px!important;padding:0!important;background:var(--soft)!important;color:var(--muted)!important;border:1px solid var(--line)!important;box-shadow:none!important;font-size:20px!important}
+.weekDays{display:grid!important;grid-template-columns:repeat(7,1fr)!important;gap:4px!important;width:100%}
+.dayChip{height:44px!important;min-height:44px!important;border-radius:14px!important;padding:4px 0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:2px!important;border:1px solid var(--line);background:var(--card);color:var(--text);box-shadow:none;overflow:hidden}
+.dayChip .dow{font-size:10px!important;line-height:1!important;color:var(--muted)!important;font-weight:850!important;text-transform:uppercase}
+.dayChip .num{display:block!important;font-size:16px!important;line-height:1.1!important;color:var(--text)!important;font-weight:950!important;min-height:18px!important}
+.dayChip.todayMark:not(.active){border-color:rgba(245,158,11,.85)!important;background:rgba(245,158,11,.10)!important}
+.dayChip.todayMark:not(.active) .num{color:#b45309!important}
+.dayChip.todayMark:not(.active) .dow{color:#b45309!important}
+.dayChip.active{background:var(--brand)!important;border-color:var(--brand)!important;color:white!important;box-shadow:0 8px 18px rgba(45,127,249,.20)!important}
+.dayChip.active .num,.dayChip.active .dow{color:white!important}
+.dayChip.active.todayMark{box-shadow:0 0 0 2px rgba(245,158,11,.50),0 8px 18px rgba(45,127,249,.20)!important}
+@media(max-width:420px){.weekNav{grid-template-columns:26px minmax(0,1fr) 26px!important}.weekDays{gap:3px!important}.dayChip{height:42px!important;min-height:42px!important;border-radius:12px!important}.dayChip .num{font-size:15px!important}.weekTop{margin-bottom:6px}.todayMiniBtn{padding:0 9px}}
+.notifyToggles{display:grid!important;grid-template-columns:1fr!important;gap:8px!important}
+.notifyChoice{min-height:42px;border:1px solid var(--line);border-radius:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;background:var(--card);color:var(--text);font-weight:800;font-size:13px;box-shadow:0 2px 10px rgba(15,23,42,.03)}
+.notifyChoice input{position:absolute;opacity:0;pointer-events:none}
+.notifyChoice .notifyText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notifyChoice .notifyMark{width:22px;height:22px;border-radius:8px;border:1.5px solid var(--line);background:var(--soft);display:flex;align-items:center;justify-content:center;flex:none;color:transparent;font-size:14px;font-weight:950;transition:.15s}
+.notifyChoice.on{border-color:rgba(45,127,249,.55);background:linear-gradient(180deg,rgba(45,127,249,.10),rgba(45,127,249,.05));color:var(--brand)}
+.notifyChoice.on .notifyMark{background:var(--brand);border-color:var(--brand);color:white}
+.notifyChoice.off{color:var(--muted);background:var(--soft)}
+.notifyChoice input:disabled ~ .notifyText,.notifyChoice input:disabled ~ .notifyMark{opacity:.55}
+
 </style>
 </head>
 <body>
@@ -958,8 +988,11 @@
     ensureCalendarWeek();
     const today=ymdLocal(new Date());
     const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-    const days=Array.from({length:7},(_,i)=>{const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i); const ymd=ymdLocal(d); return `<button class="dayChip ${ymd===selectedTodayDate?'active':''} ${ymd===today?'todayMark':''}" onclick="selectTodayDate('${ymd}')"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
-    root.innerHTML=`<div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button><button class="todayQuickBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div>`;
+    const monthNames=['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+    const end=new Date(calendarWeekStart); end.setDate(calendarWeekStart.getDate()+6);
+    const title = `${calendarWeekStart.getDate()} ${monthNames[calendarWeekStart.getMonth()]} — ${end.getDate()} ${monthNames[end.getMonth()]}`;
+    const days=Array.from({length:7},(_,i)=>{const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i); const ymd=ymdLocal(d); const classes=['dayChip']; if(ymd===selectedTodayDate)classes.push('active'); if(ymd===today)classes.push('todayMark'); return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;}).join('');
+    root.innerHTML=`<div class="weekTop"><div class="weekMonthTitle">${title}</div><button class="todayMiniBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div><div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
   }
   async function shiftWeek(delta){ensureCalendarWeek(); calendarWeekStart.setDate(calendarWeekStart.getDate()+delta*7); renderWeekCalendar();}
   async function goTodayDate(){selectedTodayDate=ymdLocal(new Date()); calendarWeekStart=weekStartMonday(parseYmdLocal(selectedTodayDate)); await loadToday();}
@@ -1228,7 +1261,8 @@
   function profileLabel(p){return (p.kind==='personal'?'👤 ':'👶 ') + (p.name||'Профиль');}
   function notifyToggle(member, profile, field, value, canManage){
     const disabled=canManage?'':'disabled';
-    return `<label class="notifyToggle ${value?'on':''}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="this.closest('.notifyToggle')?.classList.toggle('on', this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span>${notifyLabels[field]}</span></label>`;
+    const cls=value?'on':'off';
+    return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyText">${notifyLabels[field]}</span><span class="notifyMark">✓</span></label>`;
   }
   async function loadNotificationSettings(){
     const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';
