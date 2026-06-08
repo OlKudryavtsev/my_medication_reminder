@@ -1083,5 +1083,31 @@
       access.textContent='Доступ пока не подтвержден. Напишите боту /start, чтобы отправить заявку администратору, и дождитесь подтверждения.';
     }
   }
+
+
+// ===== v52 calendar + compact notification UI overrides =====
+function renderWeekCalendar(){
+  const root=document.getElementById('weekCalendar'); if(!root)return;
+  ensureCalendarWeek();
+  const today=ymdLocal(new Date());
+  const dows=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+  const monthNames=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  const title=`${monthNames[calendarWeekStart.getMonth()]} ${calendarWeekStart.getFullYear()}`;
+  const days=Array.from({length:7},(_,i)=>{
+    const d=new Date(calendarWeekStart); d.setDate(calendarWeekStart.getDate()+i);
+    const ymd=ymdLocal(d);
+    const classes=['dayChip'];
+    if(ymd===selectedTodayDate) classes.push('active');
+    if(ymd===today) classes.push('todayMark');
+    return `<button class="${classes.join(' ')}" onclick="selectTodayDate('${ymd}')" aria-label="${ymd}"><span class="dow">${dows[d.getDay()]}</span><span class="num">${d.getDate()}</span></button>`;
+  }).join('');
+  root.innerHTML=`<div class="calendarHeader"><div class="calendarMonth">${title}</div><button class="todayMiniBtn ${selectedTodayDate===today?'active':''}" onclick="goTodayDate()">Сегодня</button></div><div class="weekNav"><button class="weekArrow" onclick="shiftWeek(-1)">‹</button><div class="weekDays">${days}</div><button class="weekArrow" onclick="shiftWeek(1)">›</button></div>`;
+}
+function notifyToggle(member, profile, field, value, canManage){
+  const disabled=canManage?'':'disabled';
+  const cls=value?'on':'off';
+  return `<label class="notifyChoice ${cls}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="const box=this.closest('.notifyChoice'); box?.classList.toggle('on', this.checked); box?.classList.toggle('off', !this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span class="notifyText">${notifyLabels[field]}</span><span class="notifyMark">✓</span></label>`;
+}
+
   init();
 
