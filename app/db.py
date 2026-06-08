@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text, select, update
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
 
