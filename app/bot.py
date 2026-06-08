@@ -37,6 +37,8 @@ from .service import (
     ensure_user_account,
     resolve_profile_id,
     profile_recipients,
+    approve_user_access,
+    reject_user_access,
 )
 
 settings = get_settings()
@@ -53,8 +55,9 @@ class TakeStates(StatesGroup):
 def role_for(tg_id: int) -> str:
     if settings.child and tg_id == settings.child:
         return "child"
-    # v44: anyone may start using the bot. New users become owners of their own family.
-    return "parent"
+    if tg_id in settings.parents:
+        return "parent"
+    return "pending"
 
 
 async def upsert_user(message: Message) -> User:
@@ -67,19 +70,63 @@ async def upsert_user(message: Message) -> User:
 
 
 def is_known(tg_id: int) -> bool:
-    return True
+    return role_for(tg_id) in {"parent", "child"}
 
 
 def is_parent(tg_id: int) -> bool:
     return role_for(tg_id) == "parent"
 
 
+async def runtime_role(tg_id: int) -> str:
+    if settings.child and tg_id == settings.child:
+        return "child"
+    if tg_id in settings.parents:
+        return "parent"
+    async with SessionLocal() as session:
+        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+        return (user.role if user else "pending") or "pending"
+
+
 async def deny_unknown_message(message: Message) -> bool:
-    return False
+    role = await runtime_role(message.from_user.id)
+    if role in {"parent", "child"}:
+        return False
+    await message.answer(
+        "⏳ Ваша заявка на доступ ожидает подтверждения администратора. "
+        "После подтверждения бот напишет вам, и можно будет открыть приложение."
+    )
+    return True
 
 
 async def deny_unknown_callback(callback: CallbackQuery) -> bool:
-    return False
+    role = await runtime_role(callback.from_user.id)
+    if role in {"parent", "child"}:
+        return False
+    await callback.answer("Доступ пока не подтвержден администратором", show_alert=True)
+    return True
+
+
+def access_request_keyboard(tg_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"access_approve:{tg_id}"),
+        InlineKeyboardButton(text="🚫 Отклонить", callback_data=f"access_reject:{tg_id}"),
+    ]])
+
+
+async def notify_access_request(user: User) -> None:
+    if not settings.parents:
+        return
+    text = (
+        "👤 Новая заявка на доступ к боту\n\n"
+        f"Имя: {user.full_name or '—'}\n"
+        f"Telegram ID: `{user.tg_id}`\n\n"
+        "Подтвердить доступ? После подтверждения пользователю будет создана собственная семья и личный профиль."
+    )
+    for admin_id in settings.parents:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="Markdown", reply_markup=access_request_keyboard(user.tg_id))
+        except Exception:
+            pass
 
 
 def take_keyboard(event_id: int) -> InlineKeyboardMarkup:
@@ -145,14 +192,21 @@ def admin_keyboard() -> InlineKeyboardMarkup | None:
 @dp.message(Command("start"))
 async def start(message: Message) -> None:
     user = await upsert_user(message)
-    if user.role == "unknown":
-        await message.answer(
-            "Привет! Я семейный бот-напоминалка по лекарствам 💊\n\n"
-            f"Ваш Telegram ID: `{message.from_user.id}`\n"
-            "Роль сейчас: `unknown`\n\n"
-            "⛔ Функции недоступны, пока ваш ID не добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS в Railway.",
-            parse_mode="Markdown",
-        )
+    if user.role in {"pending", "unknown", "rejected"}:
+        if user.role != "rejected":
+            await notify_access_request(user)
+            await message.answer(
+                "Привет! Я семейный бот-напоминалка по лекарствам 💊\n\n"
+                f"Ваш Telegram ID: `{message.from_user.id}`\n"
+                "Статус: заявка на доступ отправлена администратору.\n\n"
+                "После подтверждения вам будет создана собственная семья и личный профиль.",
+                parse_mode="Markdown",
+            )
+        else:
+            await message.answer(
+                "⛔ Доступ к этому боту отклонен администратором. "
+                "Если это ошибка, попросите администратора подтвердить доступ повторно."
+            )
         return
     async with SessionLocal() as session:
         await ensure_profiles(session)
@@ -173,6 +227,56 @@ async def start(message: Message) -> None:
         "/help — помощь"
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=app_keyboard())
+
+
+
+
+@dp.callback_query(F.data.startswith("access_approve:"))
+async def access_approve(callback: CallbackQuery) -> None:
+    if callback.from_user.id not in settings.parents:
+        await callback.answer("Только администратор может подтверждать доступ", show_alert=True)
+        return
+    tg_id = int(callback.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        user = await approve_user_access(session, tg_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"✅ Доступ подтвержден\n\nИмя: {user.full_name or '—'}\nTelegram ID: `{user.tg_id}`",
+        parse_mode="Markdown",
+    )
+    try:
+        await bot.send_message(
+            user.tg_id,
+            "✅ Доступ подтвержден! Вам создана собственная семья и личный профиль. Откройте приложение командой /app.",
+            reply_markup=app_keyboard(),
+        )
+    except Exception:
+        pass
+    await callback.answer("Доступ подтвержден")
+
+
+@dp.callback_query(F.data.startswith("access_reject:"))
+async def access_reject(callback: CallbackQuery) -> None:
+    if callback.from_user.id not in settings.parents:
+        await callback.answer("Только администратор может отклонять доступ", show_alert=True)
+        return
+    tg_id = int(callback.data.split(":", 1)[1])
+    async with SessionLocal() as session:
+        user = await reject_user_access(session, tg_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"🚫 Доступ отклонен\n\nИмя: {user.full_name or '—'}\nTelegram ID: `{user.tg_id}`",
+        parse_mode="Markdown",
+    )
+    try:
+        await bot.send_message(user.tg_id, "⛔ Администратор отклонил доступ к боту.")
+    except Exception:
+        pass
+    await callback.answer("Доступ отклонен")
 
 
 @dp.message(Command("help"))

@@ -188,8 +188,9 @@ def role_for_tg_id(tg_id: int | None) -> str:
         return "unknown"
     if settings.child and tg_id == settings.child:
         return "child"
-    # v44: any Telegram user may use the app. Unknown users become owners of their own family.
-    return "parent"
+    if tg_id in settings.parents:
+        return "parent"
+    return "pending"
 
 
 def validate_init_data(init_data: str) -> int | None:
@@ -240,7 +241,10 @@ def requested_profile_id(request: Request) -> int | None:
 
 async def require_profile(request: Request, session: SessionLocal) -> tuple[int, str, int]:
     tg_id, role = require_known(request)
-    await ensure_user_account(session, tg_id, role_hint=role)
+    user = await ensure_user_account(session, tg_id, role_hint=role)
+    role = user.role or role
+    if role in {"pending", "unknown", "rejected"}:
+        raise HTTPException(status_code=403, detail="Access is pending administrator approval")
     try:
         pid = await resolve_profile_id(session, tg_id, role, requested_profile_id(request))
     except ValueError:
@@ -407,15 +411,21 @@ async def mini_app() -> FileResponse:
 async def api_me(request: Request):
     tg_id, role = require_known(request)
     async with SessionLocal() as session:
-        profiles = await profiles_for_user(session, tg_id, role)
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        role = user.role or role
+        profiles = await profiles_for_user(session, tg_id, role) if role not in {"pending", "unknown", "rejected"} else []
         active_id = await resolve_profile_id(session, tg_id, role, requested_profile_id(request)) if profiles else None
-    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": role == "parent", "multi_family_enabled": True}
+    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": role == "parent" and bool(profiles), "multi_family_enabled": True, "access_pending": role in {"pending", "unknown", "rejected"}}
 
 
 @app.get("/api/profiles", response_class=ORJSONResponse)
 async def api_profiles(request: Request):
     tg_id, role = require_known(request)
     async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        role = user.role or role
+        if role in {"pending", "unknown", "rejected"}:
+            return []
         profiles = await profiles_for_user(session, tg_id, role)
         active_id = await resolve_profile_id(session, tg_id, role, requested_profile_id(request)) if profiles else None
         return [{"id": p.id, "name": p.name, "kind": p.kind, "owner_tg_id": p.owner_tg_id, "active": p.id == active_id} for p in profiles]

@@ -55,37 +55,91 @@ async def ensure_profiles(session: AsyncSession) -> None:
     await session.commit()
 
 
-async def ensure_user_account(session: AsyncSession, tg_id: int, full_name: str = "", role_hint: str = "") -> User:
-    """Create a DB user and a private family for any Telegram user.
+async def create_private_family_for_user(session: AsyncSession, user: User) -> Profile:
+    """Create a personal family/profile for an approved external user. Idempotent."""
+    existing_member = (await session.execute(
+        select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True).order_by(FamilyMember.id)
+    )).scalars().first()
+    if existing_member:
+        profile = None
+        if user.active_profile_id:
+            profile = (await session.execute(select(Profile).where(Profile.id == user.active_profile_id, Profile.active == True))).scalar_one_or_none()
+        if profile:
+            return profile
+        profile = (await session.execute(
+            select(Profile).where(Profile.family_id == existing_member.family_id, Profile.kind == "personal", Profile.active == True).order_by(Profile.id)
+        )).scalars().first()
+        if profile:
+            user.active_profile_id = profile.id
+            await session.flush()
+            return profile
 
-    This is the key v44 change: users no longer need to be listed in Railway env vars.
-    Configured Railway users are migrated to the default family; any other user gets
-    their own family and personal profile automatically.
+    fam_name = f"Семья {user.full_name}" if user.full_name else "Моя семья"
+    family = Family(name=fam_name[:255], owner_user_id=user.id, active=True)
+    session.add(family)
+    await session.flush()
+    personal = Profile(name="Мой профиль", kind="personal", owner_tg_id=user.tg_id, family_id=family.id, active=True)
+    session.add(personal)
+    await session.flush()
+    session.add(FamilyMember(family_id=family.id, user_id=user.id, role="owner", linked_profile_id=None, active=True))
+    user.active_profile_id = personal.id
+    await session.flush()
+    return personal
+
+
+async def approve_user_access(session: AsyncSession, tg_id: int) -> User | None:
+    """Approve a pending/rejected user and create their own private family."""
+    await ensure_profiles(session)
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    if not user:
+        return None
+    user.role = "parent"
+    await create_private_family_for_user(session, user)
+    await session.commit()
+    return user
+
+
+async def reject_user_access(session: AsyncSession, tg_id: int) -> User | None:
+    await ensure_profiles(session)
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    if not user:
+        return None
+    user.role = "rejected"
+    await session.commit()
+    return user
+
+
+async def ensure_user_account(session: AsyncSession, tg_id: int, full_name: str = "", role_hint: str = "") -> User:
+    """Create/update Telegram user.
+
+    v45 behavior: external users are NOT auto-registered. They become ``pending``
+    until an existing configured parent approves them. Configured Railway parents/child
+    are still migrated to the default family and keep access.
     """
     await ensure_profiles(session)
     user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
-    cfg_role = "child" if settings.child and tg_id == settings.child else "parent" if tg_id in settings.parents else "parent"
+    configured_role = "child" if settings.child and tg_id == settings.child else "parent" if tg_id in settings.parents else "pending"
     if not user:
-        user = User(tg_id=tg_id, full_name=full_name or "", role=(role_hint or cfg_role or "parent"))
+        user = User(tg_id=tg_id, full_name=full_name or "", role=(role_hint if role_hint in {"parent", "child"} else configured_role))
         session.add(user)
         await session.flush()
     else:
         if full_name:
             user.full_name = full_name
-        if user.role in {"", "unknown", None}:
-            user.role = role_hint or cfg_role or "parent"
-    # If already a member somewhere, don't create another family.
-    existing_member = (await session.execute(select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True).order_by(FamilyMember.id))).scalars().first()
-    if not existing_member:
-        fam_name = f"Семья {full_name}" if full_name else "Моя семья"
-        family = Family(name=fam_name[:255], owner_user_id=user.id, active=True)
-        session.add(family)
-        await session.flush()
-        personal = Profile(name="Мой профиль", kind="personal", owner_tg_id=tg_id, family_id=family.id, active=True)
-        session.add(personal)
-        await session.flush()
-        session.add(FamilyMember(family_id=family.id, user_id=user.id, role="owner", linked_profile_id=None, active=True))
-        user.active_profile_id = personal.id
+        if tg_id in settings.parents and user.role not in {"parent", "child"}:
+            user.role = "parent"
+        elif settings.child and tg_id == settings.child and user.role not in {"parent", "child"}:
+            user.role = "child"
+        elif user.role in {"", "unknown", None}:
+            user.role = "pending"
+
+    # Only approved/configured users can have families/profiles created automatically.
+    if user.role in {"parent", "child"}:
+        existing_member = (await session.execute(
+            select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True).order_by(FamilyMember.id)
+        )).scalars().first()
+        if not existing_member and user.role == "parent" and tg_id not in settings.parents:
+            await create_private_family_for_user(session, user)
     await session.commit()
     return user
 
