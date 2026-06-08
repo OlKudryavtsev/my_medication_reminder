@@ -176,11 +176,18 @@
       </section>
 
       <section id="pageMore" class="page hidden">
-        <div class="adminTabs innerTabs twoTabs"><button id="moreTabProfiles" class="adminTabBtn active" onclick="showMoreTab('profiles')">Профили</button><button id="moreTabAudit" class="adminTabBtn" onclick="showMoreTab('audit')">Журнал</button></div>
-        <div id="morePanelProfiles" class="adminPanel"><div class="card"><h2>Профили</h2><div id="profileAdmin">Загрузка...</div></div></div>
+        <div class="adminTabs innerTabs moreTabs">
+          <button id="moreTabFamily" class="adminTabBtn active" onclick="showMoreTab('family')">Семья</button>
+          <button id="moreTabProfiles" class="adminTabBtn" onclick="showMoreTab('profiles')">Профили</button>
+          <button id="moreTabAudit" class="adminTabBtn" onclick="showMoreTab('audit')">Журнал</button>
+          <button id="moreTabNotify" class="adminTabBtn" onclick="showMoreTab('notify')">Уведомления</button>
+          <button id="moreTabUi" class="adminTabBtn" onclick="showMoreTab('ui')">Интерфейс</button>
+        </div>
+        <div id="morePanelFamily" class="adminPanel"><div class="card"><h2>Семья</h2><div id="familyBox">Загрузка...</div></div></div>
+        <div id="morePanelProfiles" class="adminPanel hidden"><div class="card"><h2>Профили</h2><div id="profileAdmin">Загрузка...</div></div></div>
         <div id="morePanelAudit" class="adminPanel hidden"><div class="card"><h2>Журнал изменений</h2><div id="auditLog">Загрузка...</div></div></div>
-        <div class="card"><h2>Настройки уведомлений</h2><div class="empty">Настройки уведомлений будут добавлены в следующей версии.</div></div>
-        <div class="card"><h2>Настройки интерфейса</h2><div class="empty">Тема переключается кнопкой справа вверху. Остальные настройки будут добавлены позже.</div></div>
+        <div id="morePanelNotify" class="adminPanel hidden"><div class="card"><h2>Настройки уведомлений</h2><div class="empty">Настройки уведомлений будут добавлены в следующей версии.</div></div></div>
+        <div id="morePanelUi" class="adminPanel hidden"><div class="card"><h2>Настройки интерфейса</h2><div class="empty">Тема переключается кнопкой справа вверху. Остальные настройки будут добавлены позже.</div></div></div>
       </section>
     </main>
   </div>
@@ -1043,9 +1050,52 @@
   }
 
 
+
+
+  // ===== v46: family UI and invites =====
+  function roleRu(r){return {owner:'Владелец',parent:'Родитель',child:'Ребенок',viewer:'Просмотр'}[r]||r}
+  function familyRoleOptions(current){return ['owner','parent','child','viewer'].map(r=>`<option value="${r}" ${current===r?'selected':''}>${roleRu(r)}</option>`).join('')}
+  function childProfileOptions(current){return `<option value="">—</option>` + profiles.filter(p=>p.kind==='child').map(p=>`<option value="${p.id}" ${Number(current)===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+  async function loadFamilyBox(){
+    const root=document.getElementById('familyBox');
+    if(!root)return;
+    try{
+      const fams=await api('/api/families');
+      if(!fams.length){root.innerHTML=`<div class="empty">Семей пока нет</div><button class="wide" onclick="createFamilyUi()">Создать семью</button>`;return}
+      const html=[];
+      for(const f of fams){
+        let members=[], invites=[];
+        try{members=await api('/api/family/'+f.id+'/members')}catch(e){}
+        try{if(f.can_manage)invites=await api('/api/family/'+f.id+'/invites')}catch(e){}
+        html.push(`<div class="formrow familyCard"><div class="rowTop"><div><div class="med">${escapeHtml(f.name)}</div><div class="meta">Ваша роль: ${escapeHtml(roleRu(f.role))}</div></div>${f.can_manage?`<button class="smallBtn gray" onclick="renameFamily(${f.id}, '${escapeAttr(f.name)}')">Переименовать</button>`:''}</div>
+          <div class="sectionTitle">Участники</div>
+          <div class="profileList">${members.map(m=>`<div class="profileItem"><div><div class="profileName">${escapeHtml(m.full_name||String(m.tg_id))}</div><div class="meta">ID: ${m.tg_id} · ${escapeHtml(roleRu(m.role))}${m.linked_profile_id?' · профиль #'+m.linked_profile_id:''}</div></div>${f.can_manage?`<button class="smallBtn gray" onclick="editFamilyMember(${m.id}, '${m.role}', ${m.linked_profile_id||0})">Роль</button>${m.role!=='owner'?`<button class="smallBtn danger" onclick="removeFamilyMember(${m.id})">Удалить</button>`:'<span></span>'}`:''}</div>`).join('')}</div>
+          ${f.can_manage?`<div class="sectionTitle">Приглашения</div><div class="sectionTools"><button class="smallBtn" onclick="createInviteUi(${f.id}, 'parent')">Пригласить родителя</button><button class="smallBtn" onclick="createInviteUi(${f.id}, 'child')">Пригласить ребенка</button><button class="smallBtn gray" onclick="createInviteUi(${f.id}, 'viewer')">Только просмотр</button></div>
+          <div class="auditList">${invites.length?invites.map(i=>`<div class="auditItem"><div class="auditTop"><span>${escapeHtml(roleRu(i.role))}</span><span>${i.used_count}/${i.max_uses}</span></div><div class="auditText"><input readonly value="${escapeAttr(i.link)}" onclick="this.select()"></div><div class="sectionTools"><button class="smallBtn gray" onclick="copyText('${escapeAttr(i.link)}')">Копировать</button><button class="smallBtn danger" onclick="deleteInvite(${i.id})">Удалить</button></div></div>`).join(''):'<div class="empty">Активных приглашений нет</div>'}</div>`:''}
+        </div>`);
+      }
+      html.push(`<button class="wide gray" onclick="createFamilyUi()">Создать еще одну семью</button>`);
+      root.innerHTML=html.join('');
+    }catch(e){root.innerHTML='<div class="empty">Не удалось загрузить семьи: '+escapeHtml(e.message||e)+'</div>'}
+  }
+  async function createFamilyUi(){const name=await openModal('Создать семью','<label>Название семьи</label><input id="famName" placeholder="Например, Семья Ивановых">',()=>closeModal(document.getElementById('famName').value.trim())); if(!name)return; await api('/api/families',{method:'POST',body:JSON.stringify({name})}); toast('Семья создана'); await loadProfiles(); await loadFamilyBox();}
+  async function renameFamily(id,current){const name=await openModal('Переименовать семью',`<label>Название</label><input id="famName" value="${escapeAttr(current)}">`,()=>closeModal(document.getElementById('famName').value.trim())); if(!name)return; await api('/api/families/'+id,{method:'PUT',body:JSON.stringify({name})}); toast('Семья обновлена'); await loadFamilyBox();}
+  async function createInviteUi(familyId,role){
+    const needProfile=role==='child'||role==='viewer';
+    const body=`<label>Роль</label><select id="invRole" onchange="document.getElementById('invProfileLine').classList.toggle('hidden', !(this.value==='child'||this.value==='viewer'))"><option value="parent" ${role==='parent'?'selected':''}>Родитель</option><option value="child" ${role==='child'?'selected':''}>Ребенок</option><option value="viewer" ${role==='viewer'?'selected':''}>Только просмотр</option></select><div id="invProfileLine" class="${needProfile?'':'hidden'}"><label>Профиль ребенка</label><select id="invProfile">${childProfileOptions('')}</select></div><label>Количество использований</label><input id="invMax" type="number" value="1" min="1" max="20">`;
+    const data=await openModal('Создать приглашение',body,()=>closeModal({role:document.getElementById('invRole').value,target_profile_id:Number(document.getElementById('invProfile')?.value||0)||null,max_uses:Number(document.getElementById('invMax').value||1)}));
+    if(!data)return;
+    const res=await api('/api/family-invites',{method:'POST',body:JSON.stringify({family_id:familyId,...data})});
+    await copyText(res.link); toast('Ссылка приглашения создана и скопирована'); await loadFamilyBox();
+  }
+  async function editFamilyMember(memberId,role,linked){const body=`<label>Роль</label><select id="memRole" onchange="document.getElementById('memProfileLine').classList.toggle('hidden', !(this.value==='child'||this.value==='viewer'))">${familyRoleOptions(role)}</select><div id="memProfileLine" class="${(role==='child'||role==='viewer')?'':'hidden'}"><label>Профиль ребенка</label><select id="memProfile">${childProfileOptions(linked)}</select></div>`; const data=await openModal('Изменить роль участника',body,()=>closeModal({role:document.getElementById('memRole').value,linked_profile_id:Number(document.getElementById('memProfile')?.value||0)||null})); if(!data)return; await api('/api/family-members/'+memberId,{method:'PUT',body:JSON.stringify(data)}); toast('Роль обновлена'); await loadFamilyBox();}
+  async function removeFamilyMember(memberId){const ok=await confirmAction('Удалить участника?', 'Участник потеряет доступ к этой семье.'); if(!ok)return; await api('/api/family-members/'+memberId,{method:'DELETE'}); toast('Участник удален'); await loadFamilyBox();}
+  async function deleteInvite(id){const ok=await confirmAction('Удалить приглашение?', 'Ссылка перестанет работать.'); if(!ok)return; await api('/api/family-invites/'+id,{method:'DELETE'}); toast('Приглашение удалено'); await loadFamilyBox();}
+  async function copyText(text){try{await navigator.clipboard.writeText(text); toast('Скопировано')}catch(e){prompt('Скопируйте ссылку', text)}}
+
   // ===== v43: bottom navigation restructure + read-only mode =====
   let currentAnalyticsTab='stats';
-  let currentMoreTab='profiles';
+  let currentMoreTab='family';
   function canManage(){ return !!me?.can_manage_current_profile; }
   function roleManageHtml(html){ return canManage()?html:''; }
   function showAdminTab(name){
@@ -1068,10 +1118,11 @@
   }
   function showMoreTab(name){
     currentMoreTab=name;
-    document.getElementById('moreTabProfiles')?.classList.toggle('active', name==='profiles');
-    document.getElementById('moreTabAudit')?.classList.toggle('active', name==='audit');
-    document.getElementById('morePanelProfiles')?.classList.toggle('hidden', name!=='profiles');
-    document.getElementById('morePanelAudit')?.classList.toggle('hidden', name!=='audit');
+    ['family','profiles','audit','notify','ui'].forEach(t=>{
+      document.getElementById('moreTab'+t[0].toUpperCase()+t.slice(1))?.classList.toggle('active', name===t);
+      document.getElementById('morePanel'+t[0].toUpperCase()+t.slice(1))?.classList.toggle('hidden', name!==t);
+    });
+    if(name==='family') loadFamilyBox();
     if(name==='profiles') loadProfileAdmin();
     if(name==='audit') loadAudit();
   }
@@ -1084,7 +1135,7 @@
     if(name==='assignments') showAdminTab(currentAdminTab||'assignments');
     if(name==='inventory') loadInventory();
     if(name==='analytics') showAnalyticsTab(currentAnalyticsTab||'stats');
-    if(name==='more') showMoreTab(currentMoreTab||'profiles');
+    if(name==='more') showMoreTab(currentMoreTab||'family');
     window.scrollTo({top:0,behavior:'smooth'});
   }
 
@@ -1167,7 +1218,7 @@
     if(!document.getElementById('pageAssignments')?.classList.contains('hidden')) showAdminTab(currentAdminTab||'assignments');
     if(!document.getElementById('pageInventory')?.classList.contains('hidden')) await loadInventory();
     if(!document.getElementById('pageAnalytics')?.classList.contains('hidden')) showAnalyticsTab(currentAnalyticsTab||'stats');
-    if(!document.getElementById('pageMore')?.classList.contains('hidden')) showMoreTab(currentMoreTab||'profiles');
+    if(!document.getElementById('pageMore')?.classList.contains('hidden')) showMoreTab(currentMoreTab||'family');
   }
 
   async function init(){

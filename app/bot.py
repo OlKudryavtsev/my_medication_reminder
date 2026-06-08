@@ -11,7 +11,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from sqlalchemy import select
 
 from .config import get_settings
-from .db import SessionLocal, User, Schedule, Medicine
+from .db import SessionLocal, User, Schedule, Medicine, FamilyInvite, FamilyMember, Profile
 from .service import (
     seed_default_schedule,
     ensure_events,
@@ -39,6 +39,7 @@ from .service import (
     profile_recipients,
     approve_user_access,
     reject_user_access,
+    create_private_family_for_user,
 )
 
 settings = get_settings()
@@ -191,6 +192,50 @@ def admin_keyboard() -> InlineKeyboardMarkup | None:
 
 @dp.message(Command("start"))
 async def start(message: Message) -> None:
+    parts = (message.text or "").split(maxsplit=1)
+    start_arg = parts[1].strip() if len(parts) > 1 else ""
+    if start_arg.startswith("invite_"):
+        token = start_arg[len("invite_"):].strip()
+        async with SessionLocal() as session:
+            tg_id = message.from_user.id
+            full = message.from_user.full_name or ""
+            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+            if not user:
+                user = User(tg_id=tg_id, full_name=full, role="pending")
+                session.add(user)
+                await session.flush()
+            elif full:
+                user.full_name = full
+            inv = (await session.execute(select(FamilyInvite).where(FamilyInvite.token == token, FamilyInvite.active == True))).scalar_one_or_none()
+            if not inv or inv.used_count >= inv.max_uses:
+                await message.answer("Ссылка-приглашение недействительна или уже использована.")
+                await session.commit()
+                return
+            member = (await session.execute(select(FamilyMember).where(FamilyMember.family_id == inv.family_id, FamilyMember.user_id == user.id))).scalar_one_or_none()
+            if not member:
+                member = FamilyMember(family_id=inv.family_id, user_id=user.id, role=inv.role, linked_profile_id=inv.target_profile_id, active=True)
+                session.add(member)
+            else:
+                member.role = inv.role
+                member.linked_profile_id = inv.target_profile_id
+                member.active = True
+            user.role = "child" if inv.role == "child" else "parent"
+            if inv.role in {"parent", "owner"}:
+                personal = (await session.execute(select(Profile).where(Profile.family_id == inv.family_id, Profile.kind == "personal", Profile.owner_tg_id == tg_id, Profile.active == True))).scalar_one_or_none()
+                if not personal:
+                    personal = Profile(name="Мой профиль", kind="personal", owner_tg_id=tg_id, family_id=inv.family_id, active=True)
+                    session.add(personal)
+                    await session.flush()
+                user.active_profile_id = personal.id
+            elif inv.target_profile_id:
+                user.active_profile_id = inv.target_profile_id
+            inv.used_count += 1
+            if inv.used_count >= inv.max_uses:
+                inv.active = False
+            await session.commit()
+        await message.answer("✅ Вы присоединились к семье. Откройте приложение командой /app.", reply_markup=app_keyboard())
+        return
+
     user = await upsert_user(message)
     if user.role in {"pending", "unknown", "rejected"}:
         if user.role != "rejected":

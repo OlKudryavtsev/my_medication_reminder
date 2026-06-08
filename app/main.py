@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import hashlib
 import json
+import secrets
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
@@ -143,6 +144,18 @@ class ProfilePayload(BaseModel):
 
 class FamilyNamePayload(BaseModel):
     name: str
+
+
+class FamilyInvitePayload(BaseModel):
+    family_id: int
+    role: str = "parent"  # parent/child/viewer
+    target_profile_id: int | None = None
+    max_uses: int = 1
+
+
+class FamilyMemberPayload(BaseModel):
+    role: str
+    linked_profile_id: int | None = None
 
 
 class CoursePayload(BaseModel):
@@ -468,6 +481,171 @@ async def api_update_family(family_id: int, payload: FamilyNamePayload, request:
         fam.name = payload.name.strip() or fam.name
         await session.commit()
         return {"ok": True, "id": fam.id, "name": fam.name}
+
+
+@app.post("/api/families", response_class=ORJSONResponse)
+async def api_create_family(payload: FamilyNamePayload, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        if (user.role or role) in {"pending", "unknown", "rejected"}:
+            raise HTTPException(status_code=403, detail="Access is pending administrator approval")
+        fam = Family(name=(payload.name.strip() or "Моя семья"), owner_user_id=user.id, active=True)
+        session.add(fam)
+        await session.flush()
+        session.add(FamilyMember(family_id=fam.id, user_id=user.id, role="owner", active=True))
+        personal = Profile(name="Мой профиль", kind="personal", owner_tg_id=tg_id, family_id=fam.id, active=True)
+        session.add(personal)
+        await session.flush()
+        await session.commit()
+        return {"ok": True, "id": fam.id, "name": fam.name, "profile_id": personal.id}
+
+
+@app.get("/api/family/{family_id}/members", response_class=ORJSONResponse)
+async def api_family_members(family_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family access")
+        rows = (await session.execute(
+            select(FamilyMember, User).join(User, User.id == FamilyMember.user_id).where(
+                FamilyMember.family_id == family_id,
+                FamilyMember.active == True,
+            ).order_by(FamilyMember.role, User.full_name)
+        )).all()
+        return [
+            {
+                "id": m.id,
+                "user_id": u.id,
+                "tg_id": u.tg_id,
+                "full_name": u.full_name,
+                "global_role": u.role,
+                "role": m.role,
+                "linked_profile_id": m.linked_profile_id,
+                "can_manage": current.role in {"owner", "parent"},
+            }
+            for m, u in rows
+        ]
+
+
+@app.put("/api/family-members/{member_id}", response_class=ORJSONResponse)
+async def api_update_family_member(member_id: int, payload: FamilyMemberPayload, request: Request):
+    tg_id, role = require_known(request)
+    if payload.role not in {"owner", "parent", "child", "viewer"}:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        member = (await session.execute(select(FamilyMember).where(FamilyMember.id == member_id, FamilyMember.active == True))).scalar_one_or_none()
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == member.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family management access")
+        member.role = payload.role
+        member.linked_profile_id = payload.linked_profile_id
+        target_user = (await session.execute(select(User).where(User.id == member.user_id))).scalar_one_or_none()
+        if target_user:
+            target_user.role = "child" if payload.role == "child" else "parent"
+        await session.commit()
+        return {"ok": True}
+
+
+@app.delete("/api/family-members/{member_id}", response_class=ORJSONResponse)
+async def api_delete_family_member(member_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        member = (await session.execute(select(FamilyMember).where(FamilyMember.id == member_id, FamilyMember.active == True))).scalar_one_or_none()
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found")
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == member.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current or current.id == member.id:
+            raise HTTPException(status_code=403, detail="Cannot remove this member")
+        member.active = False
+        await session.commit()
+        return {"ok": True}
+
+
+@app.get("/api/family/{family_id}/invites", response_class=ORJSONResponse)
+async def api_family_invites(family_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family management access")
+        rows = (await session.execute(select(FamilyInvite).where(FamilyInvite.family_id == family_id, FamilyInvite.active == True).order_by(FamilyInvite.id.desc()))).scalars().all()
+        me = await bot.get_me()
+        def link(token): return f"https://t.me/{me.username}?start=invite_{token}" if me.username else f"invite_{token}"
+        return [{"id": r.id, "role": r.role, "target_profile_id": r.target_profile_id, "max_uses": r.max_uses, "used_count": r.used_count, "token": r.token, "link": link(r.token), "created_at": r.created_at.isoformat() if r.created_at else ""} for r in rows]
+
+
+@app.post("/api/family-invites", response_class=ORJSONResponse)
+async def api_create_family_invite(payload: FamilyInvitePayload, request: Request):
+    tg_id, role = require_known(request)
+    if payload.role not in {"parent", "child", "viewer"}:
+        raise HTTPException(status_code=400, detail="Invalid invite role")
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == payload.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family management access")
+        if payload.role in {"child", "viewer"} and not payload.target_profile_id:
+            raise HTTPException(status_code=400, detail="Select child profile for this invite")
+        token = secrets.token_urlsafe(18)
+        inv = FamilyInvite(family_id=payload.family_id, token=token, role=payload.role, target_profile_id=payload.target_profile_id, max_uses=max(1, min(payload.max_uses, 20)), used_count=0, active=True)
+        session.add(inv)
+        await session.commit()
+        me = await bot.get_me()
+        link = f"https://t.me/{me.username}?start=invite_{token}" if me.username else f"invite_{token}"
+        return {"ok": True, "id": inv.id, "token": token, "link": link}
+
+
+@app.delete("/api/family-invites/{invite_id}", response_class=ORJSONResponse)
+async def api_delete_family_invite(invite_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        inv = (await session.execute(select(FamilyInvite).where(FamilyInvite.id == invite_id, FamilyInvite.active == True))).scalar_one_or_none()
+        if not inv:
+            raise HTTPException(status_code=404, detail="Invite not found")
+        current = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == inv.family_id,
+            FamilyMember.user_id == user.id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not current:
+            raise HTTPException(status_code=403, detail="No family management access")
+        inv.active = False
+        await session.commit()
+        return {"ok": True}
 
 
 @app.post("/api/active-profile")
