@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text, select
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Float, Integer, LargeBinary, String, Text, UniqueConstraint, func, text, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, selectinload
 
@@ -310,57 +310,302 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "dose_events", "overdue_alert_sent_at", dt_type)
 
 
-async def migrate_families() -> None:
-    """Migrate the single-family Railway configuration into DB-based families.
+async def _data_score_for_profile(session: AsyncSession, profile_id: int) -> int:
+    """Small heuristic used only for safe legacy de-duplication."""
+    total = 0
+    for model in (TreatmentCourse, Schedule, InventoryItem, MedicineCourse):
+        try:
+            total += int((await session.execute(select(func.count(model.id)).where(model.profile_id == profile_id))).scalar() or 0)
+        except Exception:
+            pass
+    try:
+        total += int((await session.execute(
+            select(func.count(DoseEvent.id)).join(Schedule, Schedule.id == DoseEvent.schedule_id).where(Schedule.profile_id == profile_id)
+        )).scalar() or 0)
+    except Exception:
+        pass
+    return total
 
-    Idempotent and non-destructive: existing profiles, schedules, assignments,
-    inventory and dose_events are preserved. Profiles without family_id are attached
-    to the default family created from current Railway settings.
+
+async def _move_profile_data(session: AsyncSession, src_id: int, dst_id: int) -> None:
+    if src_id == dst_id:
+        return
+    await session.execute(update(TreatmentCourse).where(TreatmentCourse.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(Schedule).where(Schedule.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(InventoryItem).where(InventoryItem.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(MealOverride).where(MealOverride.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(AuditLog).where(AuditLog.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(MedicineCourse).where(MedicineCourse.profile_id == src_id).values(profile_id=dst_id))
+    await session.execute(update(FamilyMember).where(FamilyMember.linked_profile_id == src_id).values(linked_profile_id=dst_id))
+    await session.execute(update(User).where(User.active_profile_id == src_id).values(active_profile_id=dst_id))
+    prof = (await session.execute(select(Profile).where(Profile.id == src_id))).scalar_one_or_none()
+    if prof:
+        prof.active = False
+
+
+async def _merge_family(session: AsyncSession, src: Family, dst: Family) -> None:
+    """Move everything from duplicate family to target family without deleting rows."""
+    if not src or not dst or src.id == dst.id:
+        return
+    # Profiles are moved as-is first; a separate profile consolidation step may merge safe duplicates.
+    for p in (await session.execute(select(Profile).where(Profile.family_id == src.id))).scalars().all():
+        p.family_id = dst.id
+    for inv in (await session.execute(select(FamilyInvite).where(FamilyInvite.family_id == src.id))).scalars().all():
+        inv.family_id = dst.id
+    src_members = (await session.execute(select(FamilyMember).where(FamilyMember.family_id == src.id))).scalars().all()
+    for m in src_members:
+        existing = (await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == dst.id,
+            FamilyMember.user_id == m.user_id,
+            FamilyMember.active == True,
+        ))).scalar_one_or_none()
+        if existing:
+            order = {"viewer": 0, "child": 1, "parent": 2, "owner": 3}
+            if order.get(m.role, 0) > order.get(existing.role, 0):
+                existing.role = m.role
+            if not existing.linked_profile_id and m.linked_profile_id:
+                existing.linked_profile_id = m.linked_profile_id
+            # Move notification settings if possible; ignore duplicates.
+            for st in (await session.execute(select(NotificationSetting).where(NotificationSetting.family_member_id == m.id))).scalars().all():
+                dup = (await session.execute(select(NotificationSetting).where(
+                    NotificationSetting.family_member_id == existing.id,
+                    NotificationSetting.profile_id == st.profile_id,
+                ))).scalar_one_or_none()
+                if not dup:
+                    st.family_member_id = existing.id
+            m.active = False
+        else:
+            m.family_id = dst.id
+            m.active = True
+    src.active = False
+
+
+async def _configured_users(session: AsyncSession) -> dict[int, User]:
+    configured = []
+    configured.extend((tg, "parent") for tg in settings.parents)
+    if settings.child:
+        configured.append((settings.child, "child"))
+    user_by_tg: dict[int, User] = {}
+    for tg_id, role in configured:
+        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+        if not user:
+            user = User(tg_id=tg_id, full_name="", role=role)
+            session.add(user)
+            await session.flush()
+        else:
+            if role == "parent" and user.role not in {"parent", "child"}:
+                user.role = "parent"
+            elif role == "child" and user.role not in {"parent", "child"}:
+                user.role = "child"
+        user_by_tg[tg_id] = user
+    return user_by_tg
+
+
+async def _find_or_create_configured_family(session: AsyncSession, user_by_tg: dict[int, User]) -> Family:
+    """Find the migrated family even if the user renamed it; do not recreate by name."""
+    candidates: dict[int, tuple[Family, int]] = {}
+
+    def add_candidate(fam: Family | None, score: int) -> None:
+        if not fam or not fam.active:
+            return
+        old = candidates.get(fam.id, (fam, 0))[1]
+        candidates[fam.id] = (fam, old + score)
+
+    # Families where configured users are members are the strongest signal.
+    if user_by_tg:
+        ids = [u.id for u in user_by_tg.values()]
+        rows = (await session.execute(
+            select(Family, FamilyMember).join(FamilyMember, FamilyMember.family_id == Family.id).where(
+                Family.active == True,
+                FamilyMember.active == True,
+                FamilyMember.user_id.in_(ids),
+            )
+        )).all()
+        for fam, mem in rows:
+            add_candidate(fam, 100 + (20 if mem.role == "owner" else 0))
+
+    # Families owning legacy profiles also count.
+    profile_filters = []
+    if settings.child:
+        profile_filters.append(Profile.owner_tg_id == settings.child)
+    if settings.parents:
+        profile_filters.append(Profile.owner_tg_id.in_(settings.parents))
+    if profile_filters:
+        rows = (await session.execute(select(Profile, Family).join(Family, Family.id == Profile.family_id).where(
+            Profile.active == True,
+            Family.active == True,
+            or_(*profile_filters),
+        ))).all()
+        for prof, fam in rows:
+            add_candidate(fam, 30)
+
+    # A renamed family should beat a freshly-created duplicate named "Семья по умолчанию".
+    for fam, score in list(candidates.values()):
+        if fam.name != "Семья по умолчанию":
+            candidates[fam.id] = (fam, score + 50)
+
+    if candidates:
+        return sorted(candidates.values(), key=lambda x: (x[1], -x[0].id), reverse=True)[0][0]
+
+    # Last fallback: existing active default by name.
+    fam = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True).order_by(Family.id))).scalars().first()
+    if fam:
+        return fam
+
+    owner_user = user_by_tg.get(settings.parents[0]) if settings.parents else None
+    fam = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
+    session.add(fam)
+    await session.flush()
+    return fam
+
+
+async def _consolidate_duplicate_profiles(session: AsyncSession, family: Family) -> None:
+    """Safely remove profiles auto-created by buggy family migrations.
+
+    Non-destructive: data from duplicates is moved into the kept profile.
+    For child profiles, only default/empty duplicates are merged into the named child profile.
+    """
+    profiles = list((await session.execute(select(Profile).where(Profile.family_id == family.id, Profile.active == True))).scalars().all())
+
+    # Personal profiles: one active personal profile per owner_tg_id inside a family.
+    by_owner: dict[int, list[Profile]] = {}
+    for p in profiles:
+        if p.kind == "personal" and p.owner_tg_id:
+            by_owner.setdefault(int(p.owner_tg_id), []).append(p)
+    for owner, group in by_owner.items():
+        if len(group) <= 1:
+            continue
+        scored = [(await _data_score_for_profile(session, p.id), p) for p in group]
+        scored.sort(key=lambda x: (x[0], -x[1].id), reverse=True)
+        keep = scored[0][1]
+        for _, loser in scored[1:]:
+            await _move_profile_data(session, loser.id, keep.id)
+
+    await session.flush()
+    profiles = list((await session.execute(select(Profile).where(Profile.family_id == family.id, Profile.active == True))).scalars().all())
+    child_profiles = [p for p in profiles if p.kind == "child"]
+    if len(child_profiles) > 1:
+        non_default = [p for p in child_profiles if (p.name or "").strip().lower() not in {"ребенок", "ребёнок", "child"}]
+        if non_default:
+            # Keep the named child profile (e.g. "Максюша") and merge auto-created "Ребенок" profiles into it.
+            scored = [(await _data_score_for_profile(session, p.id), p) for p in non_default]
+            scored.sort(key=lambda x: (x[0], -x[1].id), reverse=True)
+            keep = scored[0][1]
+            for p in child_profiles:
+                if p.id == keep.id:
+                    continue
+                if (p.name or "").strip().lower() in {"ребенок", "ребёнок", "child"} or await _data_score_for_profile(session, p.id) == 0:
+                    await _move_profile_data(session, p.id, keep.id)
+            # Ensure configured child member points to the kept child profile.
+            if settings.child:
+                user = (await session.execute(select(User).where(User.tg_id == settings.child))).scalar_one_or_none()
+                if user:
+                    member = (await session.execute(select(FamilyMember).where(
+                        FamilyMember.family_id == family.id,
+                        FamilyMember.user_id == user.id,
+                        FamilyMember.active == True,
+                    ))).scalar_one_or_none()
+                    if member:
+                        member.linked_profile_id = keep.id
+
+
+async def migrate_families() -> None:
+    """Migrate/fix family model idempotently and non-destructively.
+
+    v48 fixes a v46/v47 bug: if the default family was renamed, runtime guards
+    created another active "Семья по умолчанию" and duplicate profiles. This
+    migration finds the already-renamed configured family, merges duplicate
+    default families into it, moves data, and deactivates safe duplicate profiles.
     """
     async with SessionLocal() as session:
-        default_family = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True))).scalar_one_or_none()
-        # Create User rows for configured parents/child if they don't exist yet.
-        configured = []
-        configured.extend((tg, "parent") for tg in settings.parents)
-        if settings.child:
-            configured.append((settings.child, "child"))
-        user_by_tg: dict[int, User] = {}
-        for tg_id, role in configured:
-            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
-            if not user:
-                user = User(tg_id=tg_id, full_name="", role=role)
-                session.add(user)
-                await session.flush()
-            else:
-                if user.role in {"", "unknown", None}:
-                    user.role = role
-            user_by_tg[tg_id] = user
-        if not default_family:
-            owner_user = user_by_tg.get(settings.parents[0]) if settings.parents else None
-            default_family = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
-            session.add(default_family)
-            await session.flush()
-        # Attach legacy profiles to default family.
-        profiles = (await session.execute(select(Profile).where(Profile.family_id.is_(None)))).scalars().all()
-        for p in profiles:
-            p.family_id = default_family.id
+        user_by_tg = await _configured_users(session)
+        target_family = await _find_or_create_configured_family(session, user_by_tg)
+
+        # Merge active duplicate "Семья по умолчанию" families that contain configured users/profiles.
+        all_active = list((await session.execute(select(Family).where(Family.active == True).order_by(Family.id))).scalars().all())
+        configured_user_ids = {u.id for u in user_by_tg.values()}
+        for fam in all_active:
+            if fam.id == target_family.id:
+                continue
+            should_merge = fam.name == "Семья по умолчанию"
+            if not should_merge and configured_user_ids:
+                member_cnt = int((await session.execute(select(func.count(FamilyMember.id)).where(
+                    FamilyMember.family_id == fam.id,
+                    FamilyMember.user_id.in_(configured_user_ids),
+                    FamilyMember.active == True,
+                ))).scalar() or 0)
+                should_merge = member_cnt > 0
+            if should_merge:
+                await _merge_family(session, fam, target_family)
+
+        # Attach legacy profiles without family_id to target.
+        for p in (await session.execute(select(Profile).where(Profile.family_id.is_(None)))).scalars().all():
+            p.family_id = target_family.id
         await session.flush()
-        # Create family memberships from Railway config.
-        for tg_id, role in configured:
-            user = user_by_tg[tg_id]
-            profile = None
+
+        # Create/repair configured memberships in the target family.
+        for tg_id, user in user_by_tg.items():
+            role = "child" if settings.child and tg_id == settings.child else "parent"
+            linked_profile = None
             if role == "child":
-                profile = (await session.execute(select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "child", Profile.active == True).order_by(Profile.id))).scalars().first()
-            member = (await session.execute(select(FamilyMember).where(FamilyMember.family_id == default_family.id, FamilyMember.user_id == user.id))).scalar_one_or_none()
+                linked_profile = (await session.execute(select(Profile).where(
+                    Profile.family_id == target_family.id,
+                    Profile.kind == "child",
+                    Profile.active == True,
+                    Profile.owner_tg_id == tg_id,
+                ).order_by(Profile.id))).scalars().first()
+                if not linked_profile:
+                    # Prefer a named child if it exists; otherwise create one only if none exists.
+                    linked_profile = (await session.execute(select(Profile).where(
+                        Profile.family_id == target_family.id,
+                        Profile.kind == "child",
+                        Profile.active == True,
+                        Profile.name.notin_(["Ребенок", "Ребёнок", "child"]),
+                    ).order_by(Profile.id))).scalars().first()
+                if not linked_profile:
+                    linked_profile = (await session.execute(select(Profile).where(
+                        Profile.family_id == target_family.id,
+                        Profile.kind == "child",
+                        Profile.active == True,
+                    ).order_by(Profile.id))).scalars().first()
+                if not linked_profile:
+                    linked_profile = Profile(name="Ребенок", kind="child", owner_tg_id=tg_id, family_id=target_family.id, active=True)
+                    session.add(linked_profile)
+                    await session.flush()
+                if not linked_profile.owner_tg_id:
+                    linked_profile.owner_tg_id = tg_id
+            member = (await session.execute(select(FamilyMember).where(
+                FamilyMember.family_id == target_family.id,
+                FamilyMember.user_id == user.id,
+            ))).scalar_one_or_none()
+            desired_role = "child" if role == "child" else "owner" if tg_id == (settings.parents[0] if settings.parents else None) else "parent"
             if not member:
-                member = FamilyMember(family_id=default_family.id, user_id=user.id, role=("child" if role == "child" else "owner" if tg_id == (settings.parents[0] if settings.parents else None) else "parent"), linked_profile_id=(profile.id if profile else None), active=True)
-                session.add(member)
+                session.add(FamilyMember(
+                    family_id=target_family.id,
+                    user_id=user.id,
+                    role=desired_role,
+                    linked_profile_id=(linked_profile.id if linked_profile else None),
+                    active=True,
+                ))
             else:
                 member.active = True
-                if role == "child":
-                    member.role = "child"
-                    if profile:
-                        member.linked_profile_id = profile.id
+                member.role = desired_role if member.role not in {"owner"} else member.role
+                if linked_profile:
+                    member.linked_profile_id = linked_profile.id
+
+        # Create missing personal profiles for configured parents only if none exists in target family.
+        for parent_id in settings.parents:
+            parent_profile = (await session.execute(select(Profile).where(
+                Profile.family_id == target_family.id,
+                Profile.kind == "personal",
+                Profile.owner_tg_id == parent_id,
+                Profile.active == True,
+            ))).scalar_one_or_none()
+            if not parent_profile:
+                session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, family_id=target_family.id, active=True))
+
+        await session.flush()
+        await _consolidate_duplicate_profiles(session, target_family)
         await session.commit()
 
 

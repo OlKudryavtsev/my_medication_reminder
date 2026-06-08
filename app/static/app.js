@@ -45,7 +45,7 @@
   async function loadProfiles(){
     profiles = await api('/api/profiles');
     if(!profiles.length)return;
-    currentProfileId = Number(localStorage.getItem('activeProfileId')) || (profiles.find(p=>p.active)?.id) || profiles[0].id;
+    currentProfileId = (profiles.find(p=>p.active)?.id) || Number(localStorage.getItem('activeProfileId')) || profiles[0].id;
     if(!profiles.some(p=>p.id===currentProfileId)) currentProfileId = profiles[0].id;
     renderProfileChips();
   }
@@ -1014,10 +1014,10 @@
     daily_summary_enabled:'вечерний итог'
   };
   function roleLabel(r){return {owner:'Владелец',parent:'Родитель',child:'Ребенок',viewer:'Просмотр'}[r]||r;}
-  function profileLabel(p){return `${escapeHtml(p.name)}${p.kind==='personal'?' · личный':' · ребенок'}`;}
+  function profileLabel(p){return (p.kind==='personal'?'👤 ':'👶 ') + (p.name||'Профиль');}
   function notifyToggle(member, profile, field, value, canManage){
     const disabled=canManage?'':'disabled';
-    return `<label class="notifyToggle ${value?'on':''}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span>${notifyLabels[field]}</span></label>`;
+    return `<label class="notifyToggle ${value?'on':''}"><input type="checkbox" ${value?'checked':''} ${disabled} onchange="this.closest('.notifyToggle')?.classList.toggle('on', this.checked); saveNotificationSetting(${member.id},${profile.id})" data-member="${member.id}" data-profile="${profile.id}" data-field="${field}"><span>${notifyLabels[field]}</span></label>`;
   }
   async function loadNotificationSettings(){
     const root=document.getElementById('notifyBox'); if(!root)return; root.innerHTML='<div class="empty">Загрузка...</div>';
@@ -1049,7 +1049,8 @@
   }
 
   async function changeProfile(profileId){
-    currentProfileId=profileId; localStorage.setItem('activeProfileId',String(profileId));
+    currentProfileId=Number(profileId); localStorage.setItem('activeProfileId',String(currentProfileId));
+    renderProfileChips();
     try{ await api('/api/active-profile',{method:'POST',body:JSON.stringify({profile_id:currentProfileId})}); }catch(e){}
     editSchedules.clear(); coursesCache=[];
     await loadToday();

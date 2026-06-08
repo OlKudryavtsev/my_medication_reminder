@@ -16,38 +16,64 @@ TZ = ZoneInfo(settings.timezone)
 
 
 async def ensure_profiles(session: AsyncSession) -> None:
-    """Create/migrate default family and legacy profiles without deleting data."""
-    # db.init_db() already runs migrate_families(); keep this lightweight guard for runtime calls.
-    default_family = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True))).scalar_one_or_none()
-    if not default_family:
+    """Runtime guard for configured legacy family without recreating duplicates.
+
+    v48: find the configured family by membership/owner, not by the literal name
+    "Семья по умолчанию", because the user may have renamed it.
+    """
+    target_family = None
+    configured_users: list[User] = []
+    for tg in list(settings.parents) + ([settings.child] if settings.child else []):
+        user = (await session.execute(select(User).where(User.tg_id == tg))).scalar_one_or_none()
+        if user:
+            configured_users.append(user)
+    if configured_users:
+        rows = (await session.execute(
+            select(Family, FamilyMember).join(FamilyMember, FamilyMember.family_id == Family.id).where(
+                Family.active == True,
+                FamilyMember.active == True,
+                FamilyMember.user_id.in_([u.id for u in configured_users]),
+            ).order_by(Family.name == "Семья по умолчанию", Family.id)
+        )).all()
+        if rows:
+            # Prefer renamed family over accidental duplicate named "Семья по умолчанию".
+            target_family = sorted([r[0] for r in rows], key=lambda f: (f.name == "Семья по умолчанию", f.id))[0]
+    if not target_family:
+        target_family = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True).order_by(Family.id))).scalars().first()
+    if not target_family:
         owner_user = None
         if settings.parents:
             owner_user = (await session.execute(select(User).where(User.tg_id == settings.parents[0]))).scalar_one_or_none()
-        default_family = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
-        session.add(default_family)
+        target_family = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
+        session.add(target_family)
         await session.flush()
-    # Existing deployments: ensure there is a child profile when CHILD_CHAT_ID is configured.
+
+    # Existing deployments: ensure a child profile only if there is no active child profile at all.
     child_profile = None
     if settings.child:
         child_profile = (await session.execute(
-            select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "child", Profile.active == True).order_by(Profile.id)
+            select(Profile).where(Profile.family_id == target_family.id, Profile.kind == "child", Profile.owner_tg_id == settings.child, Profile.active == True).order_by(Profile.id)
         )).scalars().first()
         if not child_profile:
-            child_profile = Profile(name="Ребенок", kind="child", owner_tg_id=settings.child, family_id=default_family.id, active=True)
+            child_profile = (await session.execute(
+                select(Profile).where(Profile.family_id == target_family.id, Profile.kind == "child", Profile.active == True).order_by(Profile.name == "Ребенок", Profile.id)
+            )).scalars().first()
+        if not child_profile:
+            child_profile = Profile(name="Ребенок", kind="child", owner_tg_id=settings.child, family_id=target_family.id, active=True)
             session.add(child_profile)
             await session.flush()
         elif not child_profile.owner_tg_id:
             child_profile.owner_tg_id = settings.child
-    # Existing deployments: personal profiles for configured parents.
+    # Existing deployments: personal profiles for configured parents, but do not create duplicates.
     for parent_id in settings.parents:
         parent_profile = (await session.execute(
-            select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "personal", Profile.owner_tg_id == parent_id, Profile.active == True)
+            select(Profile).where(Profile.family_id == target_family.id, Profile.kind == "personal", Profile.owner_tg_id == parent_id, Profile.active == True)
         )).scalar_one_or_none()
         if not parent_profile:
-            session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, family_id=default_family.id, active=True))
+            session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, family_id=target_family.id, active=True))
     # Attach legacy profiles/schedules.
     for p in (await session.execute(select(Profile).where(Profile.family_id.is_(None)))).scalars().all():
-        p.family_id = default_family.id
+        p.family_id = target_family.id
     if child_profile:
         legacy = (await session.execute(select(Schedule).where(Schedule.profile_id.is_(None)))).scalars().all()
         for sched in legacy:
