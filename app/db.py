@@ -358,7 +358,7 @@ async def _merge_family(session: AsyncSession, src: Family, dst: Family) -> None
             FamilyMember.family_id == dst.id,
             FamilyMember.user_id == m.user_id,
             FamilyMember.active == True,
-        ))).scalar_one_or_none()
+        ).order_by(FamilyMember.id))).scalars().first()
         if existing:
             order = {"viewer": 0, "child": 1, "parent": 2, "owner": 3}
             if order.get(m.role, 0) > order.get(existing.role, 0):
@@ -370,7 +370,7 @@ async def _merge_family(session: AsyncSession, src: Family, dst: Family) -> None
                 dup = (await session.execute(select(NotificationSetting).where(
                     NotificationSetting.family_member_id == existing.id,
                     NotificationSetting.profile_id == st.profile_id,
-                ))).scalar_one_or_none()
+                ).order_by(NotificationSetting.id))).scalars().first()
                 if not dup:
                     st.family_member_id = existing.id
             m.active = False
@@ -504,7 +504,7 @@ async def _consolidate_duplicate_profiles(session: AsyncSession, family: Family)
                         FamilyMember.family_id == family.id,
                         FamilyMember.user_id == user.id,
                         FamilyMember.active == True,
-                    ))).scalar_one_or_none()
+                    ).order_by(FamilyMember.id))).scalars().first()
                     if member:
                         member.linked_profile_id = keep.id
 
@@ -577,7 +577,7 @@ async def migrate_families() -> None:
             member = (await session.execute(select(FamilyMember).where(
                 FamilyMember.family_id == target_family.id,
                 FamilyMember.user_id == user.id,
-            ))).scalar_one_or_none()
+            ).order_by(FamilyMember.id))).scalars().first()
             desired_role = "child" if role == "child" else "owner" if tg_id == (settings.parents[0] if settings.parents else None) else "parent"
             if not member:
                 session.add(FamilyMember(
@@ -600,7 +600,7 @@ async def migrate_families() -> None:
                 Profile.kind == "personal",
                 Profile.owner_tg_id == parent_id,
                 Profile.active == True,
-            ))).scalar_one_or_none()
+            ).order_by(Profile.id))).scalars().first()
             if not parent_profile:
                 session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, family_id=target_family.id, active=True))
 
@@ -635,7 +635,7 @@ async def migrate_schedule_courses() -> None:
                 MedicineCourse.specific_dates == (sched.specific_dates or ""),
                 MedicineCourse.timing_template == (sched.timing_template or "fixed"),
             )
-            mc = (await session.execute(q)).scalar_one_or_none()
+            mc = (await session.execute(q.order_by(MedicineCourse.id))).scalars().first()
             if not mc:
                 mc = MedicineCourse(
                     profile_id=sched.profile_id,
