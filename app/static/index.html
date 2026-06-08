@@ -133,6 +133,7 @@
 .scheduleMiniDetails{grid-column:1/-1!important;margin-left:0!important;width:100%}
 .tinyDanger{min-height:28px;padding:5px 8px;border-radius:9px;background:#fee2e2;color:#b91c1c;box-shadow:none;font-size:11px}
 @media(max-width:420px){.scheduleMiniCard{grid-template-columns:88px minmax(0,1fr)!important}.weekNav{grid-template-columns:26px minmax(0,1fr) 26px auto;gap:4px}.weekArrow{padding:0}.todayQuickBtn{font-size:11px;padding:0 6px}.dayChip{height:40px}.dayChip .num{font-size:15px}}
+.twoTabs{grid-template-columns:1fr 1fr}.readonlyNotice{font-size:12px;color:var(--muted);margin:8px 0}.manageOnly.hiddenByRole{display:none!important}
 </style>
 </head>
 <body>
@@ -141,49 +142,54 @@
     <div id="access" class="card hidden"></div>
     <main id="main" class="hidden">
       <section id="pageToday" class="page"><div class="card"><div id="weekCalendar" class="weekStrip"></div><div class="filters"><button id="filterPending" class="filterBtn active" onclick="setTodayFilter('pending')">Не принято</button><button id="filterSnoozed" class="filterBtn" onclick="setTodayFilter('snoozed')">Отложено</button><button id="filterSkipped" class="filterBtn" onclick="setTodayFilter('skipped')">Пропущено</button><button id="filterTaken" class="filterBtn" onclick="setTodayFilter('taken')">Выпил</button><button id="filterAll" class="filterBtn" onclick="setTodayFilter('all')">Все</button></div><div id="today">Загрузка...</div></div></section>
-      <section id="pageStats" class="page hidden"><div class="card"><h2>Статистика за 30 дней</h2><div id="statsFilters" class="statsFilterBar"></div><div id="stats">Загрузка...</div></div></section>
-      <section id="pageHistory" class="page hidden"><div class="card"><h2>История по препарату</h2><label>Препарат</label><select id="medicineSelect" onchange="loadHistory()"></select><div id="history" class="muted" style="margin-top:10px">Выберите препарат</div></div></section>
-      <section id="pageAdmin" class="page hidden">
-        <div class="adminTabs">
+
+      <section id="pageAssignments" class="page hidden">
+        <div class="adminTabs innerTabs twoTabs">
           <button id="adminTabAssignments" class="adminTabBtn active" onclick="showAdminTab('assignments')">Назначения</button>
           <button id="adminTabMeds" class="adminTabBtn" onclick="showAdminTab('meds')">Расписание</button>
-          <button id="adminTabInventory" class="adminTabBtn" onclick="showAdminTab('inventory')">Аптечка</button>
-          <button id="adminTabProfiles" class="adminTabBtn" onclick="showAdminTab('profiles')">Профили</button>
         </div>
-        <div id="adminPanelAssignments" class="adminPanel">
-          <div class="card"><h2>Назначения</h2><div id="coursesBox">Загрузка...</div></div>
+        <div id="adminPanelAssignments" class="adminPanel"><div class="card"><h2>Назначения</h2><div id="coursesBox">Загрузка...</div></div></div>
+        <div id="adminPanelMeds" class="adminPanel hidden"><div class="card"><h2>Расписание</h2><div class="searchFilter"><label>Фильтр по лекарству</label><select id="scheduleSearch" class="searchSelect" onchange="loadSchedules()"><option value="">Все лекарства</option></select></div><div class="scheduleToolbar"><label class="toggleLine"><input id="scheduleGroupByAssignment" type="checkbox" checked onchange="loadSchedules()"> Группировать по назначению</label></div><div id="schedules" class="listWithFilter">Загрузка...</div></div></div>
+      </section>
+
+      <section id="pageInventory" class="page hidden">
+        <div class="card"><h2>Аптечка</h2>
+          <div class="searchFilter"><label>Фильтр по лекарству</label><select id="inventorySearch" class="searchSelect" onchange="loadInventory()"><option value="">Все лекарства</option></select></div>
+          <div id="inventoryManageBox"><button id="addInventoryToggle" class="collapseToggle" onclick="toggleAddInventoryForm()"><span>Добавить в аптечку</span><span class="chev">＋</span></button>
+          <div id="addInventoryForm" class="addForm hidden">
+            <div class="fieldLine"><label>Лекарство</label><select id="invName" onchange="toggleInventoryManualName()"><option value="">Выберите лекарство</option></select></div><div class="fieldLine invManualLine hidden" id="invManualLine"><label>Или вручную</label><input id="invNameManual" placeholder="Название лекарства"></div>
+            <div class="fieldLine"><label>Остаток</label><input id="invQty" type="number" min="0" value="0"></div>
+            <div class="fieldLine"><label>Ед. изм.</label><input id="invUnit" value="шт"></div>
+            <div class="fieldLine"><label>Напомнить при</label><input id="invThreshold" type="number" min="0" value="5"></div>
+            <div class="fieldLine"><label>Фото</label><input id="invPhoto" type="file" accept="image/*"></div>
+            <button class="wide gray" onclick="aiRecognizeInventoryPhoto()" style="margin-top:6px">Распознать название по фото</button>
+            <button class="wide" onclick="addInventory()" style="margin-top:10px">Добавить в аптечку</button>
+          </div></div>
+          <div id="inventoryBox" style="margin-top:14px">Загрузка...</div>
         </div>
-        <div id="adminPanelMeds" class="adminPanel hidden">
-          <div class="card"><h2>Расписание</h2><div class="searchFilter"><label>Фильтр по лекарству</label><select id="scheduleSearch" class="searchSelect" onchange="loadSchedules()"><option value="">Все лекарства</option></select></div><div class="scheduleToolbar"><label class="toggleLine"><input id="scheduleGroupByAssignment" type="checkbox" checked onchange="loadSchedules()"> Группировать по назначению</label></div><div id="schedules" class="listWithFilter">Загрузка...</div></div>
-          <div class="card"><h2>Журнал изменений</h2><div id="auditLog">Загрузка...</div></div>
-        </div>
-        <div id="adminPanelInventory" class="adminPanel hidden">
-          <div class="card"><h2>Аптечка</h2>
-            <div class="searchFilter"><label>Фильтр по лекарству</label><select id="inventorySearch" class="searchSelect" onchange="loadInventory()"><option value="">Все лекарства</option></select></div>
-            <button id="addInventoryToggle" class="collapseToggle" onclick="toggleAddInventoryForm()"><span>Добавить в аптечку</span><span class="chev">＋</span></button>
-            <div id="addInventoryForm" class="addForm hidden">
-              <div class="fieldLine"><label>Лекарство</label><select id="invName" onchange="toggleInventoryManualName()"><option value="">Выберите лекарство</option></select></div><div class="fieldLine invManualLine hidden" id="invManualLine"><label>Или вручную</label><input id="invNameManual" placeholder="Название лекарства"></div>
-              <div class="fieldLine"><label>Остаток</label><input id="invQty" type="number" min="0" value="0"></div>
-              <div class="fieldLine"><label>Ед. изм.</label><input id="invUnit" value="шт"></div>
-              <div class="fieldLine"><label>Напомнить при</label><input id="invThreshold" type="number" min="0" value="5"></div>
-              <div class="fieldLine"><label>Фото</label><input id="invPhoto" type="file" accept="image/*"></div>
-              <button class="wide gray" onclick="aiRecognizeInventoryPhoto()" style="margin-top:6px">Распознать название по фото</button>
-              <button class="wide" onclick="addInventory()" style="margin-top:10px">Добавить в аптечку</button>
-            </div>
-            <div id="inventoryBox" style="margin-top:14px">Загрузка...</div>
-          </div>
-        </div>
-        <div id="adminPanelProfiles" class="adminPanel hidden">
-          <div class="card"><h2>Профили</h2><div id="profileAdmin">Загрузка...</div></div>
-        </div>
+      </section>
+
+      <section id="pageAnalytics" class="page hidden">
+        <div class="adminTabs innerTabs twoTabs"><button id="analyticsTabStats" class="adminTabBtn active" onclick="showAnalyticsTab('stats')">Статистика</button><button id="analyticsTabHistory" class="adminTabBtn" onclick="showAnalyticsTab('history')">История приемов</button></div>
+        <div id="analyticsPanelStats" class="adminPanel"><div class="card"><h2>Статистика за 30 дней</h2><div id="statsFilters" class="statsFilterBar"></div><div id="stats">Загрузка...</div></div></div>
+        <div id="analyticsPanelHistory" class="adminPanel hidden"><div class="card"><h2>История приемов</h2><label>Препарат</label><select id="medicineSelect" onchange="loadHistory()"></select><div id="history" class="muted" style="margin-top:10px">Выберите препарат</div></div></div>
+      </section>
+
+      <section id="pageMore" class="page hidden">
+        <div class="adminTabs innerTabs twoTabs"><button id="moreTabProfiles" class="adminTabBtn active" onclick="showMoreTab('profiles')">Профили</button><button id="moreTabAudit" class="adminTabBtn" onclick="showMoreTab('audit')">Журнал</button></div>
+        <div id="morePanelProfiles" class="adminPanel"><div class="card"><h2>Профили</h2><div id="profileAdmin">Загрузка...</div></div></div>
+        <div id="morePanelAudit" class="adminPanel hidden"><div class="card"><h2>Журнал изменений</h2><div id="auditLog">Загрузка...</div></div></div>
+        <div class="card"><h2>Настройки уведомлений</h2><div class="empty">Настройки уведомлений будут добавлены в следующей версии.</div></div>
+        <div class="card"><h2>Настройки интерфейса</h2><div class="empty">Тема переключается кнопкой справа вверху. Остальные настройки будут добавлены позже.</div></div>
       </section>
     </main>
   </div>
   <nav id="bottomTabs" class="bottomTabs hidden">
     <button id="tabToday" class="tab active" onclick="showTab('today')"><svg viewBox="0 0 24 24"><path d="M8 3v3M16 3v3M4 9h16"/><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M8 13h3M8 17h6"/></svg><span>Приемы</span></button>
-    <button id="tabStats" class="tab" onclick="showTab('stats')"><svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="7" width="3" height="9" rx="1"/><rect x="17" y="13" width="3" height="3" rx="1"/></svg><span>Статистика</span></button>
-    <button id="tabHistory" class="tab" onclick="showTab('history')"><svg viewBox="0 0 24 24"><path d="M12 8v5l3 2"/><path d="M4.3 12a7.7 7.7 0 1 0 2.2-5.4"/><path d="M4 4v5h5"/></svg><span>История</span></button>
-    <button id="tabAdmin" class="tab hidden" onclick="showTab('admin')"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>Админ</span></button>
+    <button id="tabAssignments" class="tab" onclick="showTab('assignments')"><svg viewBox="0 0 24 24"><path d="M8 4h8l2 2v14H6V6l2-2Z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg><span>Назначения</span></button>
+    <button id="tabInventory" class="tab" onclick="showTab('inventory')"><svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 7V5h6v2M12 10v7M8.5 13.5h7"/></svg><span>Аптечка</span></button>
+    <button id="tabAnalytics" class="tab" onclick="showTab('analytics')"><svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx="1"/><rect x="12" y="7" width="3" height="9" rx="1"/><rect x="17" y="13" width="3" height="3" rx="1"/></svg><span>Аналитика</span></button>
+    <button id="tabMore" class="tab" onclick="showTab('more')"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg><span>Еще</span></button>
   </nav>
   <div id="modal" class="modal hidden" onclick="closeModalByBackdrop(event)">
     <div class="modalCard">
@@ -194,6 +200,7 @@
   </div>
   <div class="toast" id="toast"></div>
 <script>
+
 
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
   const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
@@ -1035,8 +1042,155 @@
     await loadStats();
   }
 
-  async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+
+  // ===== v43: bottom navigation restructure + read-only mode =====
+  let currentAnalyticsTab='stats';
+  let currentMoreTab='profiles';
+  function canManage(){ return !!me?.can_manage_current_profile; }
+  function roleManageHtml(html){ return canManage()?html:''; }
+  function showAdminTab(name){
+    currentAdminTab=name;
+    document.getElementById('adminTabAssignments')?.classList.toggle('active', name==='assignments');
+    document.getElementById('adminTabMeds')?.classList.toggle('active', name==='meds');
+    document.getElementById('adminPanelAssignments')?.classList.toggle('hidden', name!=='assignments');
+    document.getElementById('adminPanelMeds')?.classList.toggle('hidden', name!=='meds');
+    if(name==='assignments') loadCourses();
+    if(name==='meds'){ loadCourses(); loadSchedules(); }
+  }
+  function showAnalyticsTab(name){
+    currentAnalyticsTab=name;
+    document.getElementById('analyticsTabStats')?.classList.toggle('active', name==='stats');
+    document.getElementById('analyticsTabHistory')?.classList.toggle('active', name==='history');
+    document.getElementById('analyticsPanelStats')?.classList.toggle('hidden', name!=='stats');
+    document.getElementById('analyticsPanelHistory')?.classList.toggle('hidden', name!=='history');
+    if(name==='stats') loadStats();
+    if(name==='history') loadMedicines();
+  }
+  function showMoreTab(name){
+    currentMoreTab=name;
+    document.getElementById('moreTabProfiles')?.classList.toggle('active', name==='profiles');
+    document.getElementById('moreTabAudit')?.classList.toggle('active', name==='audit');
+    document.getElementById('morePanelProfiles')?.classList.toggle('hidden', name!=='profiles');
+    document.getElementById('morePanelAudit')?.classList.toggle('hidden', name!=='audit');
+    if(name==='profiles') loadProfileAdmin();
+    if(name==='audit') loadAudit();
+  }
+  function showTab(name){
+    ['today','assignments','inventory','analytics','more'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});
+    document.getElementById(pageId(name))?.classList.remove('hidden');
+    document.getElementById(tabId(name))?.classList.add('active');
+    location.hash=name==='today'?'':'#'+name;
+    if(name==='today') loadToday();
+    if(name==='assignments') showAdminTab(currentAdminTab||'assignments');
+    if(name==='inventory') loadInventory();
+    if(name==='analytics') showAnalyticsTab(currentAnalyticsTab||'stats');
+    if(name==='more') showMoreTab(currentMoreTab||'profiles');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  async function loadCourses(){
+    const root=document.getElementById('coursesBox'); if(!root)return; root.innerHTML='<div class="empty">Загружаю назначения...</div>';
+    try{
+      const raw=await api('/api/courses'); const rows=Array.isArray(raw)?raw:(Array.isArray(raw?.items)?raw.items:[]); coursesCache=rows; window.courseGroups={};
+      const rootActions=canManage()?`<div class="treeActions"><button onclick="recognizeAssignmentOpen=!recognizeAssignmentOpen;loadCourses()">✨ Распознать назначение</button><button class="gray" onclick="toggleAddAssignmentForm()">${addAssignmentOpen?'Скрыть форму':'Добавить назначение'}</button></div>`:`<div class="readonlyNotice">Просмотр назначений. Редактирование доступно родителю.</div>`;
+      const recognize=canManage()?`<div class="recognizeBox ${recognizeAssignmentOpen?'':'collapsed'}" style="margin-top:10px"><div class="recognizeContent"><div class="recognizeTitle">📷 Распознать назначение по фото</div><div class="muted" style="font-size:12px;margin-top:4px">ИИ создаст черновик назначения и курсов. Перед сохранением проверьте данные.</div><div class="grid2" style="margin-top:10px"><input id="aiAssignmentFile" type="file" accept="image/*"><button onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div></div><div id="assignmentAiPreview"></div>`:'';
+      const addForm=canManage()?`<div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}" style="margin-top:10px"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div>`:'';
+      const list=rows.length?rows.map(c=>{
+        const open=expandedAssignments.has(c.id);
+        const safeName=escapeAttr(c.name||''),safeDoctor=escapeAttr(c.doctor||''),safeComment=escapeAttr(c.comment||'');
+        const actions=canManage()?`<div class="treeActions"><button onclick="openCourseMedicineForm(${c.id})">Добавить курс</button><button class="gray" onclick="aiAddMedicineToCourse(${c.id})" ${aiEnabled?'':'disabled'}>Распознать курс из текста</button><button class="gray" onclick="editCourse(${c.id}, '${safeName}', '${c.assignment_date||''}', '${safeDoctor}', '${safeComment}')">Изменить назначение</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div>`:'';
+        return `<div class="assignmentTreeCard"><div class="assignmentTreeHead" onclick="toggleAssignmentTree(${c.id})"><div><div class="assignmentTreeTitle">${escapeHtml(c.name||'Без названия')}</div><div class="assignmentTreeMeta">${assignmentHeaderMeta(c)} · курсов: ${(c.items||[]).length?assignmentCourseGroups(c).length:0}</div></div><div class="chev" id="assignmentChev_${c.id}">${open?'−':'＋'}</div></div><div id="assignmentBody_${c.id}" class="assignmentTreeBody ${open?'':'hidden'}">${c.comment?`<div class="muted" style="font-size:12px;margin-bottom:6px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div>${actions}<div class="courseItemsTitle">Курсы лекарств</div>${assignmentCoursesTree(c)}</div></div>`;
+      }).join(''):'<div class="empty">Назначений пока нет</div>';
+      root.innerHTML=rootActions+recognize+addForm+`<div class="adminList" style="margin-top:14px">${list}</div>`;
+    }catch(e){console.error('loadCourses failed',e);root.innerHTML=`<div class="empty">Не удалось загрузить назначения.<br><br><small>${escapeHtml(e.message||String(e))}</small></div>`;toast('Ошибка загрузки назначений');}
+  }
+
+  function courseGroupBody(g,key){
+    const dp=doseParts(g.dose); const period=`${g.start_date||'—'} — ${g.end_date||'—'}`; const analogs=(g.analogs||'').trim(); const route=(g.administration_route||'').trim(); const form=(g.dosage_form||dp.unit||'').trim();
+    const inactiveActions = (canManage() && !g.active_all) ? `<button onclick="startScheduleGroup('${g.ids.join(',')}')">Начать курс</button>` : '';
+    const rows=[['Формат', form||'—'],['Дозировка', g.dose||'—'],['Периодичность', courseFreqText(g)],['Прием', courseApplyText(g)],['Способ применения', route||'—'],['Длительность', durationText(g.start_date,g.end_date,g.duration_value,g.duration_unit)],['Период', period]];
+    const details=rows.map(([k,v])=>`<div class="detailRow"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('');
+    const manage=canManage()?`<div class="courseActionsRow">${inactiveActions||`<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button>`}${inactiveActions?`<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button>`:''}<button class="gray" onclick="openHistoryImport('${key}')">Внести историю</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div>`:'';
+    return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="courseDetailList">${details}${analogs?`<div class="detailRow analogsRow"><span>Аналоги</span><b>${escapeHtml(analogs)}</b></div>`:''}</div>${courseNeedPanel(g)}${manage}</div>`;
+  }
+
+  function scheduleForm(r){
+    const detailKey='sd_'+r.id; const slot=scheduleSlotText(r); const courseName=assignmentGroupName(r);
+    const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="legacyScheduleEdit(${r.id})">Изменить привязку</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button></div>`:'';
+    return `<div class="scheduleMiniCard"><div class="scheduleMiniSlot">${escapeHtml(slot)}</div><div class="scheduleCourseToggle" onclick="toggleScheduleDetails('${detailKey}')"><div class="scheduleMiniName">${escapeHtml(r.name)}</div><div class="scheduleMiniMeta">Назначение: ${escapeHtml(courseName)} · Длительность курса: ${escapeHtml(scheduleCourseDurationText(r))}</div></div><div id="${detailKey}" class="scheduleMiniDetails hidden"><div class="muted" style="font-size:12px">${escapeHtml(r.dose||'')}${r.label?' · '+escapeHtml(r.label):''}<br>Период: ${r.start_date||'—'} — ${r.end_date||'—'}</div>${manage}</div></div>`;
+  }
+  async function loadSchedules(){
+    if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}
+    let rows=await api('/api/schedules');
+    const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');
+    if(selected)rows=rows.filter(r=>(r.name||'')===selected);
+    const root=document.getElementById('schedules'); const toolbar=document.querySelector('.scheduleToolbar');
+    if(toolbar){toolbar.innerHTML=`<div class="scheduleToolbarCompact ${scheduleGroupByAssignmentUi?'':'listMode'}"><div class="miniSwitch"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">Группировать</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Списком</button></div>${scheduleGroupByAssignmentUi?`<div class="miniSwitch expandSwitch"><button onclick="setScheduleGroupsOpen(true)">Раскрыть</button><button onclick="setScheduleGroupsOpen(false)">Скрыть</button></div>`:''}</div>`;}
+    if(!rows.length){root.innerHTML='<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>';return;}
+    if(!scheduleGroupByAssignmentUi){root.innerHTML=`<div class="scheduleListLikeToday">${rows.map(scheduleForm).join('')}</div>`;return;}
+    const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});
+    root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');if(!expandedScheduleGroups.has(key)) expandedScheduleGroups.add(key);const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" data-key="${key}" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span id="scheduleTreeChev_${key}">${open?'−':'＋'}</span></div><div id="scheduleTreeBody_${key}" class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');
+  }
+
+  async function loadInventory(){
+    if(canManage()) await populateInventoryMedicineSelect();
+    let rows=await api('/api/inventory');
+    const selected=populateMedicineFilter('inventorySearch', rows, i=>i.name||'');
+    if(selected)rows=rows.filter(i=>(i.name||'')===selected);
+    const manageBox=document.getElementById('inventoryManageBox'); if(manageBox) manageBox.classList.toggle('hidden', !canManage());
+    const root=document.getElementById('inventoryBox');
+    if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
+    root.innerHTML=`<div class="adminList">${rows.map(i=>{const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div>`:'';return `<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div>${manage}</div>`}).join('')}</div>`;
+  }
+
+  async function loadStats(){
+    if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}
+    const filterRoot=document.getElementById('statsFilters');
+    const currentVal=document.getElementById('statsCourseFilter')?.value || '';
+    if(filterRoot){
+      filterRoot.innerHTML=`<label>Фильтр по назначению</label><select id="statsCourseFilter" onchange="loadStats()"><option value="">Все назначения</option>${(coursesCache||[]).map(c=>`<option value="${c.id}" ${String(c.id)===String(currentVal)?'selected':''}>${escapeHtml(c.name||'Назначение')}</option>`).join('')}</select>`;
+      if(currentVal) document.getElementById('statsCourseFilter').value=currentVal;
+    }
+    const courseId=document.getElementById('statsCourseFilter')?.value || '';
+    const rows=await api('/api/stats'+(courseId?`?course_id=${encodeURIComponent(courseId)}`:''));
+    const root=document.getElementById('stats');
+    if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}
+    root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`;
+  }
+
+
+  async function changeProfile(profileId){
+    currentProfileId=profileId; localStorage.setItem('activeProfileId',String(profileId));
+    try{ await api('/api/active-profile',{method:'POST',body:JSON.stringify({profile_id:currentProfileId})}); }catch(e){}
+    editSchedules.clear(); coursesCache=[];
+    await loadToday();
+    if(!document.getElementById('pageAssignments')?.classList.contains('hidden')) showAdminTab(currentAdminTab||'assignments');
+    if(!document.getElementById('pageInventory')?.classList.contains('hidden')) await loadInventory();
+    if(!document.getElementById('pageAnalytics')?.classList.contains('hidden')) showAnalyticsTab(currentAnalyticsTab||'stats');
+    if(!document.getElementById('pageMore')?.classList.contains('hidden')) showMoreTab(currentMoreTab||'profiles');
+  }
+
+  async function init(){
+    try{
+      renderFrequencySlots();
+      try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}
+      me=await api('/api/me');
+      await loadProfiles();
+      me=await api('/api/me');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('bottomTabs').classList.remove('hidden');
+      document.body.classList.toggle('readonly', !canManage());
+      await loadToday();
+      const h=location.hash.replace('#','');
+      if(['assignments','inventory','analytics','more'].includes(h)) showTab(h);
+    }catch(e){
+      const access=document.getElementById('access');
+      access.className='card deny';
+      access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.';
+    }
+  }
   init();
+
 </script>
 </body>
 </html>

@@ -840,5 +840,151 @@
     await loadStats();
   }
 
-  async function init(){try{renderFrequencySlots();try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}me=await api('/api/me');await loadProfiles();me=await api('/api/me');document.getElementById('main').classList.remove('hidden');document.getElementById('bottomTabs').classList.remove('hidden');if(me.can_manage_current_profile)document.getElementById('tabAdmin').classList.remove('hidden');await loadToday();const h=location.hash.replace('#','');if(['stats','history','admin'].includes(h)){if(h==='admin'&&!me.can_manage_current_profile)showTab('today');else showTab(h)}}catch(e){const access=document.getElementById('access');access.className='card deny';access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.'}}
+
+  // ===== v43: bottom navigation restructure + read-only mode =====
+  let currentAnalyticsTab='stats';
+  let currentMoreTab='profiles';
+  function canManage(){ return !!me?.can_manage_current_profile; }
+  function roleManageHtml(html){ return canManage()?html:''; }
+  function showAdminTab(name){
+    currentAdminTab=name;
+    document.getElementById('adminTabAssignments')?.classList.toggle('active', name==='assignments');
+    document.getElementById('adminTabMeds')?.classList.toggle('active', name==='meds');
+    document.getElementById('adminPanelAssignments')?.classList.toggle('hidden', name!=='assignments');
+    document.getElementById('adminPanelMeds')?.classList.toggle('hidden', name!=='meds');
+    if(name==='assignments') loadCourses();
+    if(name==='meds'){ loadCourses(); loadSchedules(); }
+  }
+  function showAnalyticsTab(name){
+    currentAnalyticsTab=name;
+    document.getElementById('analyticsTabStats')?.classList.toggle('active', name==='stats');
+    document.getElementById('analyticsTabHistory')?.classList.toggle('active', name==='history');
+    document.getElementById('analyticsPanelStats')?.classList.toggle('hidden', name!=='stats');
+    document.getElementById('analyticsPanelHistory')?.classList.toggle('hidden', name!=='history');
+    if(name==='stats') loadStats();
+    if(name==='history') loadMedicines();
+  }
+  function showMoreTab(name){
+    currentMoreTab=name;
+    document.getElementById('moreTabProfiles')?.classList.toggle('active', name==='profiles');
+    document.getElementById('moreTabAudit')?.classList.toggle('active', name==='audit');
+    document.getElementById('morePanelProfiles')?.classList.toggle('hidden', name!=='profiles');
+    document.getElementById('morePanelAudit')?.classList.toggle('hidden', name!=='audit');
+    if(name==='profiles') loadProfileAdmin();
+    if(name==='audit') loadAudit();
+  }
+  function showTab(name){
+    ['today','assignments','inventory','analytics','more'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});
+    document.getElementById(pageId(name))?.classList.remove('hidden');
+    document.getElementById(tabId(name))?.classList.add('active');
+    location.hash=name==='today'?'':'#'+name;
+    if(name==='today') loadToday();
+    if(name==='assignments') showAdminTab(currentAdminTab||'assignments');
+    if(name==='inventory') loadInventory();
+    if(name==='analytics') showAnalyticsTab(currentAnalyticsTab||'stats');
+    if(name==='more') showMoreTab(currentMoreTab||'profiles');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  async function loadCourses(){
+    const root=document.getElementById('coursesBox'); if(!root)return; root.innerHTML='<div class="empty">Загружаю назначения...</div>';
+    try{
+      const raw=await api('/api/courses'); const rows=Array.isArray(raw)?raw:(Array.isArray(raw?.items)?raw.items:[]); coursesCache=rows; window.courseGroups={};
+      const rootActions=canManage()?`<div class="treeActions"><button onclick="recognizeAssignmentOpen=!recognizeAssignmentOpen;loadCourses()">✨ Распознать назначение</button><button class="gray" onclick="toggleAddAssignmentForm()">${addAssignmentOpen?'Скрыть форму':'Добавить назначение'}</button></div>`:`<div class="readonlyNotice">Просмотр назначений. Редактирование доступно родителю.</div>`;
+      const recognize=canManage()?`<div class="recognizeBox ${recognizeAssignmentOpen?'':'collapsed'}" style="margin-top:10px"><div class="recognizeContent"><div class="recognizeTitle">📷 Распознать назначение по фото</div><div class="muted" style="font-size:12px;margin-top:4px">ИИ создаст черновик назначения и курсов. Перед сохранением проверьте данные.</div><div class="grid2" style="margin-top:10px"><input id="aiAssignmentFile" type="file" accept="image/*"><button onclick="aiRecognizeAssignment()" ${aiEnabled?'':'disabled'}>Распознать</button></div>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div></div><div id="assignmentAiPreview"></div>`:'';
+      const addForm=canManage()?`<div id="courseAddForm" class="courseAddForm ${addAssignmentOpen?'':'hidden'}" style="margin-top:10px"><div class="fieldLine"><label>Название</label><input id="courseName" placeholder="Например, назначение гастроэнтеролога"></div><div class="fieldLine"><label>Дата назначения</label><input id="courseDate" type="date"></div><div class="fieldLine"><label>Врач</label><input id="courseDoctor" placeholder="опционально"></div><div class="fieldLine"><label>Комментарий</label><input id="courseComment" placeholder="опционально"></div><div class="fieldLine"><label>Фото / файл</label><input id="courseFile" type="file" accept="image/*,.pdf,.doc,.docx,.txt"></div><button class="wide" onclick="addCourse()" style="margin-top:8px">Сохранить назначение</button></div>`:'';
+      const list=rows.length?rows.map(c=>{
+        const open=expandedAssignments.has(c.id);
+        const safeName=escapeAttr(c.name||''),safeDoctor=escapeAttr(c.doctor||''),safeComment=escapeAttr(c.comment||'');
+        const actions=canManage()?`<div class="treeActions"><button onclick="openCourseMedicineForm(${c.id})">Добавить курс</button><button class="gray" onclick="aiAddMedicineToCourse(${c.id})" ${aiEnabled?'':'disabled'}>Распознать курс из текста</button><button class="gray" onclick="editCourse(${c.id}, '${safeName}', '${c.assignment_date||''}', '${safeDoctor}', '${safeComment}')">Изменить назначение</button><button class="danger" onclick="deleteCourse(${c.id})">Удалить</button></div><div class="fieldLine"><label>Добавить файл</label><input id="courseFile_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx,.txt" onchange="uploadCourseFile(${c.id})"></div>`:'';
+        return `<div class="assignmentTreeCard"><div class="assignmentTreeHead" onclick="toggleAssignmentTree(${c.id})"><div><div class="assignmentTreeTitle">${escapeHtml(c.name||'Без названия')}</div><div class="assignmentTreeMeta">${assignmentHeaderMeta(c)} · курсов: ${(c.items||[]).length?assignmentCourseGroups(c).length:0}</div></div><div class="chev" id="assignmentChev_${c.id}">${open?'−':'＋'}</div></div><div id="assignmentBody_${c.id}" class="assignmentTreeBody ${open?'':'hidden'}">${c.comment?`<div class="muted" style="font-size:12px;margin-bottom:6px">${escapeHtml(c.comment)}</div>`:''}<div class="attachments">${(c.attachments||[]).map(a=>`<button class="fileLinkBtn" onclick="openFilePreview('${attachmentUrl(a.id)}', '${escapeAttr(a.filename)}', ${isImageFilename(a.filename)})">📎 ${escapeHtml(a.filename)}</button>`).join('')}</div>${actions}<div class="courseItemsTitle">Курсы лекарств</div>${assignmentCoursesTree(c)}</div></div>`;
+      }).join(''):'<div class="empty">Назначений пока нет</div>';
+      root.innerHTML=rootActions+recognize+addForm+`<div class="adminList" style="margin-top:14px">${list}</div>`;
+    }catch(e){console.error('loadCourses failed',e);root.innerHTML=`<div class="empty">Не удалось загрузить назначения.<br><br><small>${escapeHtml(e.message||String(e))}</small></div>`;toast('Ошибка загрузки назначений');}
+  }
+
+  function courseGroupBody(g,key){
+    const dp=doseParts(g.dose); const period=`${g.start_date||'—'} — ${g.end_date||'—'}`; const analogs=(g.analogs||'').trim(); const route=(g.administration_route||'').trim(); const form=(g.dosage_form||dp.unit||'').trim();
+    const inactiveActions = (canManage() && !g.active_all) ? `<button onclick="startScheduleGroup('${g.ids.join(',')}')">Начать курс</button>` : '';
+    const rows=[['Формат', form||'—'],['Дозировка', g.dose||'—'],['Периодичность', courseFreqText(g)],['Прием', courseApplyText(g)],['Способ применения', route||'—'],['Длительность', durationText(g.start_date,g.end_date,g.duration_value,g.duration_unit)],['Период', period]];
+    const details=rows.map(([k,v])=>`<div class="detailRow"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('');
+    const manage=canManage()?`<div class="courseActionsRow">${inactiveActions||`<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button>`}${inactiveActions?`<button class="gray" onclick="openCourseMedicineForm(${g.course_id}, null, null, '${key}')">Изменить</button>`:''}<button class="gray" onclick="openHistoryImport('${key}')">Внести историю</button><button class="danger" onclick="deleteScheduleGroup('${g.ids.join(',')}')">Удалить</button></div>`:'';
+    return `<div id="courseBody_${key}" class="courseGroupBody hidden"><div class="courseDetailList">${details}${analogs?`<div class="detailRow analogsRow"><span>Аналоги</span><b>${escapeHtml(analogs)}</b></div>`:''}</div>${courseNeedPanel(g)}${manage}</div>`;
+  }
+
+  function scheduleForm(r){
+    const detailKey='sd_'+r.id; const slot=scheduleSlotText(r); const courseName=assignmentGroupName(r);
+    const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="legacyScheduleEdit(${r.id})">Изменить привязку</button><button class="danger" onclick="deleteSchedule(${r.id})">Удалить</button></div>`:'';
+    return `<div class="scheduleMiniCard"><div class="scheduleMiniSlot">${escapeHtml(slot)}</div><div class="scheduleCourseToggle" onclick="toggleScheduleDetails('${detailKey}')"><div class="scheduleMiniName">${escapeHtml(r.name)}</div><div class="scheduleMiniMeta">Назначение: ${escapeHtml(courseName)} · Длительность курса: ${escapeHtml(scheduleCourseDurationText(r))}</div></div><div id="${detailKey}" class="scheduleMiniDetails hidden"><div class="muted" style="font-size:12px">${escapeHtml(r.dose||'')}${r.label?' · '+escapeHtml(r.label):''}<br>Период: ${r.start_date||'—'} — ${r.end_date||'—'}</div>${manage}</div></div>`;
+  }
+  async function loadSchedules(){
+    if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}
+    let rows=await api('/api/schedules');
+    const selected=populateMedicineFilter('scheduleSearch', rows, r=>r.name||'');
+    if(selected)rows=rows.filter(r=>(r.name||'')===selected);
+    const root=document.getElementById('schedules'); const toolbar=document.querySelector('.scheduleToolbar');
+    if(toolbar){toolbar.innerHTML=`<div class="scheduleToolbarCompact ${scheduleGroupByAssignmentUi?'':'listMode'}"><div class="miniSwitch"><button class="${scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=true;loadSchedules()">Группировать</button><button class="${!scheduleGroupByAssignmentUi?'active':''}" onclick="scheduleGroupByAssignmentUi=false;loadSchedules()">Списком</button></div>${scheduleGroupByAssignmentUi?`<div class="miniSwitch expandSwitch"><button onclick="setScheduleGroupsOpen(true)">Раскрыть</button><button onclick="setScheduleGroupsOpen(false)">Скрыть</button></div>`:''}</div>`;}
+    if(!rows.length){root.innerHTML='<div class="empty">Активное расписание пустое. Запустите курс в назначении.</div>';return;}
+    if(!scheduleGroupByAssignmentUi){root.innerHTML=`<div class="scheduleListLikeToday">${rows.map(scheduleForm).join('')}</div>`;return;}
+    const map=new Map();rows.forEach(r=>{const k=assignmentGroupName(r);if(!map.has(k))map.set(k,[]);map.get(k).push(r)});
+    root.innerHTML=[...map.entries()].map(([name,list])=>{const key='sg_'+name.replace(/[^a-zA-Zа-яА-Я0-9]/g,'_');if(!expandedScheduleGroups.has(key)) expandedScheduleGroups.add(key);const open=expandedScheduleGroups.has(key);return `<div class="scheduleTreeGroup"><div class="scheduleTreeHead" data-key="${key}" onclick="toggleScheduleTreeGroup('${key}')"><span>${escapeHtml(name)}</span><span id="scheduleTreeChev_${key}">${open?'−':'＋'}</span></div><div id="scheduleTreeBody_${key}" class="scheduleTreeBody ${open?'':'hidden'}">${list.map(scheduleForm).join('')}</div></div>`}).join('');
+  }
+
+  async function loadInventory(){
+    if(canManage()) await populateInventoryMedicineSelect();
+    let rows=await api('/api/inventory');
+    const selected=populateMedicineFilter('inventorySearch', rows, i=>i.name||'');
+    if(selected)rows=rows.filter(i=>(i.name||'')===selected);
+    const manageBox=document.getElementById('inventoryManageBox'); if(manageBox) manageBox.classList.toggle('hidden', !canManage());
+    const root=document.getElementById('inventoryBox');
+    if(!rows.length){root.innerHTML='<div class="empty">Аптечка пустая</div>';return}
+    root.innerHTML=`<div class="adminList">${rows.map(i=>{const manage=canManage()?`<div class="adminActions"><button class="gray" onclick="editInventory(${i.id}, '${escapeAttr(i.name)}', ${i.quantity}, '${escapeAttr(i.unit_name||'шт')}', ${i.low_threshold})">Изменить</button><button class="danger" onclick="deleteInventory(${i.id})">Удалить</button></div><div class="fieldLine"><label>Заменить фото</label><input type="file" accept="image/*" onchange="uploadInventoryPhoto(${i.id}, this.files[0])"></div>`:'';return `<div class="formrow"><div><div class="med">${escapeHtml(i.name)}</div><div class="meta">Осталось: ${i.quantity} ${escapeHtml(i.unit_name||'шт')} · напомнить при ${i.low_threshold}</div></div><div class="attachments">${i.photo_url?`<button class="fileLinkBtn" onclick="openFilePreview('${inventoryPhotoUrl(i)}', 'Фото: ${escapeAttr(i.name)}', true)">📷 Фото лекарства</button>`:''}</div>${manage}</div>`}).join('')}</div>`;
+  }
+
+  async function loadStats(){
+    if(!coursesCache.length){try{coursesCache=await api('/api/courses')}catch(e){coursesCache=[]}}
+    const filterRoot=document.getElementById('statsFilters');
+    const currentVal=document.getElementById('statsCourseFilter')?.value || '';
+    if(filterRoot){
+      filterRoot.innerHTML=`<label>Фильтр по назначению</label><select id="statsCourseFilter" onchange="loadStats()"><option value="">Все назначения</option>${(coursesCache||[]).map(c=>`<option value="${c.id}" ${String(c.id)===String(currentVal)?'selected':''}>${escapeHtml(c.name||'Назначение')}</option>`).join('')}</select>`;
+      if(currentVal) document.getElementById('statsCourseFilter').value=currentVal;
+    }
+    const courseId=document.getElementById('statsCourseFilter')?.value || '';
+    const rows=await api('/api/stats'+(courseId?`?course_id=${encodeURIComponent(courseId)}`:''));
+    const root=document.getElementById('stats');
+    if(!rows.length){root.innerHTML='<div class="empty">Статистики пока нет</div>';return}
+    root.innerHTML=`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`;
+  }
+
+
+  async function changeProfile(profileId){
+    currentProfileId=profileId; localStorage.setItem('activeProfileId',String(profileId));
+    try{ await api('/api/active-profile',{method:'POST',body:JSON.stringify({profile_id:currentProfileId})}); }catch(e){}
+    editSchedules.clear(); coursesCache=[];
+    await loadToday();
+    if(!document.getElementById('pageAssignments')?.classList.contains('hidden')) showAdminTab(currentAdminTab||'assignments');
+    if(!document.getElementById('pageInventory')?.classList.contains('hidden')) await loadInventory();
+    if(!document.getElementById('pageAnalytics')?.classList.contains('hidden')) showAnalyticsTab(currentAnalyticsTab||'stats');
+    if(!document.getElementById('pageMore')?.classList.contains('hidden')) showMoreTab(currentMoreTab||'profiles');
+  }
+
+  async function init(){
+    try{
+      renderFrequencySlots();
+      try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}
+      me=await api('/api/me');
+      await loadProfiles();
+      me=await api('/api/me');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('bottomTabs').classList.remove('hidden');
+      document.body.classList.toggle('readonly', !canManage());
+      await loadToday();
+      const h=location.hash.replace('#','');
+      if(['assignments','inventory','analytics','more'].includes(h)) showTab(h);
+    }catch(e){
+      const access=document.getElementById('access');
+      access.className='card deny';
+      access.textContent='Доступ закрыт. Откройте мини-приложение из Telegram и убедитесь, что ваш Telegram ID добавлен в CHILD_CHAT_ID или PARENT_CHAT_IDS.';
+    }
+  }
   init();
