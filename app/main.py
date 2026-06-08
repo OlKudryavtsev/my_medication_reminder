@@ -438,7 +438,10 @@ async def api_me(request: Request):
         role = user.role or role
         profiles = await profiles_for_user(session, tg_id, role) if role not in {"pending", "unknown", "rejected"} else []
         active_id = await resolve_profile_id(session, tg_id, role, requested_profile_id(request)) if profiles else None
-    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": role == "parent" and bool(profiles), "multi_family_enabled": True, "access_pending": role in {"pending", "unknown", "rejected"}}
+        can_manage_current_profile = False
+        if active_id:
+            can_manage_current_profile = await is_profile_manager(session, tg_id, role, active_id)
+    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": can_manage_current_profile, "multi_family_enabled": True, "access_pending": role in {"pending", "unknown", "rejected"}}
 
 
 @app.get("/api/profiles", response_class=ORJSONResponse)
@@ -1068,7 +1071,9 @@ async def serialize_schedule_row(session, r: Schedule, include_need: bool = Fals
 @app.get("/api/courses", response_class=ORJSONResponse)
 async def api_courses(request: Request):
     async with SessionLocal() as session:
-        tg_id, role, profile_id = await require_profile_manager(request, session)
+        # Read-only access is allowed for children/viewers linked to the profile.
+        # Editing endpoints below still use require_profile_manager().
+        tg_id, role, profile_id = await require_profile(request, session)
         rows = await get_courses(session, profile_id)
         result = []
         for c in rows:

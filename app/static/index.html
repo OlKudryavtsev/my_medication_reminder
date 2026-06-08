@@ -1246,10 +1246,10 @@
           <div class="profileList">${members.map(m=>`<div class="profileItem"><div><div class="profileName">${escapeHtml(m.full_name||String(m.tg_id))}</div><div class="meta">ID: ${m.tg_id} · ${escapeHtml(roleRu(m.role))}${m.linked_profile_id?' · профиль #'+m.linked_profile_id:''}</div></div>${f.can_manage?`<button class="smallBtn gray" onclick="editFamilyMember(${m.id}, '${m.role}', ${m.linked_profile_id||0})">Роль</button>${m.role!=='owner'?`<button class="smallBtn danger" onclick="removeFamilyMember(${m.id})">Удалить</button>`:'<span></span>'}`:''}</div>`).join('')}</div>
           ${f.can_manage?`<div class="sectionTitle">Приглашения</div><div class="sectionTools"><button class="smallBtn" onclick="createInviteUi(${f.id}, 'parent')">Пригласить родителя</button><button class="smallBtn" onclick="createInviteUi(${f.id}, 'child')">Пригласить ребенка</button><button class="smallBtn gray" onclick="createInviteUi(${f.id}, 'viewer')">Только просмотр</button></div>
           <div class="auditList">${invites.length?invites.map(i=>`<div class="auditItem"><div class="auditTop"><span>${escapeHtml(roleRu(i.role))}</span><span>${i.used_count}/${i.max_uses}</span></div><div class="auditText"><input readonly value="${escapeAttr(i.link)}" onclick="this.select()"></div><div class="sectionTools"><button class="smallBtn gray" onclick="copyText('${escapeAttr(i.link)}')">Копировать</button><button class="smallBtn danger" onclick="deleteInvite(${i.id})">Удалить</button></div></div>`).join(''):'<div class="empty">Активных приглашений нет</div>'}</div>`:''}
-          <div class="familyDangerZone"><div class="sectionTitle">Данные семьи</div><div class="familyActionsV54"><button class="gray" onclick="exportFamilyData(${f.id})">Экспорт JSON</button><button class="gray" onclick="leaveFamily(${f.id})">Выйти из семьи</button>${f.role==='owner'?`<button class="danger" onclick="deleteFamilyData(${f.id})">Удалить семью</button>`:''}</div><div class="dataHint">Экспорт скачивает структурированную копию данных семьи. Удаление семьи доступно только владельцу.</div></div>
+          <div class="familyDangerZone"><div class="sectionTitle">Данные семьи</div><div class="familyActionsV54"><button class="gray" onclick="exportFamilyData(${f.id})">Экспорт JSON</button>${!isChildAccount()?`<button class="gray" onclick="leaveFamily(${f.id})">Выйти из семьи</button>`:''}${f.role==='owner'?`<button class="danger" onclick="deleteFamilyData(${f.id})">Удалить семью</button>`:''}</div><div class="dataHint">Экспорт скачивает структурированную копию данных семьи.${isChildAccount()?' Выход из семьи и создание новых семей доступны взрослому владельцу/родителю.':' Удаление семьи доступно только владельцу.'}</div></div>
         </div>`);
       }
-      html.push(`<button class="wide gray" onclick="createFamilyUi()">Создать еще одну семью</button>`);
+      if(!isChildAccount()) html.push(`<button class="wide gray" onclick="createFamilyUi()">Создать еще одну семью</button>`);
       root.innerHTML=html.join('');
     }catch(e){root.innerHTML='<div class="empty">Не удалось загрузить семьи: '+escapeHtml(e.message||e)+'</div>'}
   }
@@ -1282,6 +1282,7 @@
   let currentAnalyticsTab='stats';
   let currentMoreTab='family';
   function canManage(){ return !!me?.can_manage_current_profile; }
+  function isChildAccount(){ return me?.role === 'child' || me?.is_child === true; }
   function roleManageHtml(html){ return canManage()?html:''; }
   function showAdminTab(name){
     currentAdminTab=name;
