@@ -658,6 +658,117 @@ async def api_delete_family_invite(invite_id: int, request: Request):
         return {"ok": True}
 
 
+def _row_dict(obj, exclude_binary: bool = True) -> dict:
+    data = {}
+    for col in obj.__table__.columns:
+        val = getattr(obj, col.name)
+        if exclude_binary and isinstance(val, (bytes, bytearray, memoryview)):
+            data[col.name] = f"<binary {len(val) if val is not None else 0} bytes>"
+        elif isinstance(val, (datetime, date)):
+            data[col.name] = val.isoformat()
+        else:
+            data[col.name] = val
+    return data
+
+
+async def _require_family_member(session, tg_id: int, role: str, family_id: int) -> tuple[User, FamilyMember, Family]:
+    user = await ensure_user_account(session, tg_id, role_hint=role)
+    fam = (await session.execute(select(Family).where(Family.id == family_id, Family.active == True))).scalar_one_or_none()
+    if not fam:
+        raise HTTPException(status_code=404, detail="Family not found")
+    member = (await session.execute(select(FamilyMember).where(
+        FamilyMember.family_id == family_id,
+        FamilyMember.user_id == user.id,
+        FamilyMember.active == True,
+    ).order_by(FamilyMember.id))).scalars().first()
+    if not member:
+        raise HTTPException(status_code=403, detail="No family access")
+    return user, member, fam
+
+
+@app.get("/api/families/{family_id}/export")
+async def api_export_family_data(family_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user, member, fam = await _require_family_member(session, tg_id, role, family_id)
+        profile_ids = [r[0] for r in (await session.execute(select(Profile.id).where(Profile.family_id == family_id))).all()]
+        member_ids = [r[0] for r in (await session.execute(select(FamilyMember.id).where(FamilyMember.family_id == family_id))).all()]
+        schedules = list((await session.execute(select(Schedule).where(Schedule.profile_id.in_(profile_ids)) if profile_ids else select(Schedule).where(False))).scalars().all())
+        schedule_ids = [x.id for x in schedules]
+        course_ids = [r[0] for r in (await session.execute(select(TreatmentCourse.id).where(TreatmentCourse.profile_id.in_(profile_ids)) if profile_ids else select(TreatmentCourse.id).where(False))).all()]
+        export = {
+            "exported_at": datetime.now(TZ).isoformat(),
+            "family": _row_dict(fam),
+            "members": [_row_dict(x) for x in (await session.execute(select(FamilyMember).where(FamilyMember.family_id == family_id))).scalars().all()],
+            "profiles": [_row_dict(x) for x in (await session.execute(select(Profile).where(Profile.family_id == family_id))).scalars().all()],
+            "assignments": [_row_dict(x) for x in (await session.execute(select(TreatmentCourse).where(TreatmentCourse.profile_id.in_(profile_ids)) if profile_ids else select(TreatmentCourse).where(False))).scalars().all()],
+            "assignment_attachments": [_row_dict(x) for x in (await session.execute(select(TreatmentAttachment).where(TreatmentAttachment.course_id.in_(course_ids)) if course_ids else select(TreatmentAttachment).where(False))).scalars().all()],
+            "medicine_courses": [_row_dict(x) for x in (await session.execute(select(MedicineCourse).where(MedicineCourse.profile_id.in_(profile_ids)) if profile_ids else select(MedicineCourse).where(False))).scalars().all()],
+            "schedules": [_row_dict(x) for x in schedules],
+            "dose_events": [_row_dict(x) for x in (await session.execute(select(DoseEvent).where(DoseEvent.schedule_id.in_(schedule_ids)) if schedule_ids else select(DoseEvent).where(False))).scalars().all()],
+            "inventory": [_row_dict(x) for x in (await session.execute(select(InventoryItem).where(InventoryItem.profile_id.in_(profile_ids)) if profile_ids else select(InventoryItem).where(False))).scalars().all()],
+            "notification_settings": [_row_dict(x) for x in (await session.execute(select(NotificationSetting).where(NotificationSetting.family_member_id.in_(member_ids)) if member_ids else select(NotificationSetting).where(False))).scalars().all()],
+            "invites": [_row_dict(x) for x in (await session.execute(select(FamilyInvite).where(FamilyInvite.family_id == family_id))).scalars().all()],
+        }
+        payload = json.dumps(export, ensure_ascii=False, indent=2).encode("utf-8")
+        safe_name = "family_export"
+        return Response(payload, media_type="application/json; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={safe_name}_{family_id}.json"})
+
+
+@app.post("/api/families/{family_id}/leave", response_class=ORJSONResponse)
+async def api_leave_family(family_id: int, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user, member, fam = await _require_family_member(session, tg_id, role, family_id)
+        active_owners = list((await session.execute(select(FamilyMember).where(
+            FamilyMember.family_id == family_id,
+            FamilyMember.active == True,
+            FamilyMember.role == "owner",
+        ))).scalars().all())
+        if member.role == "owner" and len(active_owners) <= 1:
+            raise HTTPException(status_code=400, detail="Назначьте другого владельца или удалите семью целиком")
+        member.active = False
+        if user.active_profile_id:
+            prof = (await session.execute(select(Profile).where(Profile.id == user.active_profile_id))).scalar_one_or_none()
+            if prof and prof.family_id == family_id:
+                user.active_profile_id = None
+        await session.commit()
+        return {"ok": True}
+
+
+@app.delete("/api/families/{family_id}", response_class=ORJSONResponse)
+async def api_delete_family(family_id: int, request: Request):
+    """Delete family data. Implemented as hard delete for family-owned data; users/medicine dictionary remain."""
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user, member, fam = await _require_family_member(session, tg_id, role, family_id)
+        if member.role != "owner":
+            raise HTTPException(status_code=403, detail="Only owner can delete family")
+        profile_ids = [r[0] for r in (await session.execute(select(Profile.id).where(Profile.family_id == family_id))).all()]
+        member_ids = [r[0] for r in (await session.execute(select(FamilyMember.id).where(FamilyMember.family_id == family_id))).all()]
+        schedule_ids = [r[0] for r in (await session.execute(select(Schedule.id).where(Schedule.profile_id.in_(profile_ids)) if profile_ids else select(Schedule.id).where(False))).all()]
+        course_ids = [r[0] for r in (await session.execute(select(TreatmentCourse.id).where(TreatmentCourse.profile_id.in_(profile_ids)) if profile_ids else select(TreatmentCourse.id).where(False))).all()]
+        if schedule_ids:
+            await session.execute(delete(DoseEvent).where(DoseEvent.schedule_id.in_(schedule_ids)))
+            await session.execute(delete(Schedule).where(Schedule.id.in_(schedule_ids)))
+        if course_ids:
+            await session.execute(delete(TreatmentAttachment).where(TreatmentAttachment.course_id.in_(course_ids)))
+        if profile_ids:
+            await session.execute(delete(MedicineCourse).where(MedicineCourse.profile_id.in_(profile_ids)))
+            await session.execute(delete(TreatmentCourse).where(TreatmentCourse.profile_id.in_(profile_ids)))
+            await session.execute(delete(InventoryItem).where(InventoryItem.profile_id.in_(profile_ids)))
+            await session.execute(delete(Profile).where(Profile.id.in_(profile_ids)))
+        if member_ids:
+            await session.execute(delete(NotificationSetting).where(NotificationSetting.family_member_id.in_(member_ids)))
+        await session.execute(delete(FamilyInvite).where(FamilyInvite.family_id == family_id))
+        await session.execute(delete(FamilyMember).where(FamilyMember.family_id == family_id))
+        await session.execute(delete(Family).where(Family.id == family_id))
+        if user.active_profile_id in profile_ids:
+            user.active_profile_id = None
+        await session.commit()
+        return {"ok": True}
+
+
 
 @app.get("/api/notification-settings", response_class=ORJSONResponse)
 async def api_notification_settings(request: Request):

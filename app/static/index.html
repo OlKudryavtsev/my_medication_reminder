@@ -207,6 +207,10 @@
 .notifyFamilyTop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.notifyFamilyTop h2{margin:0!important;font-size:18px!important}.notifyExpandBtns{display:flex;gap:6px}.notifyExpandBtns button{min-height:28px!important;border-radius:999px!important;padding:0 10px!important;font-size:11px!important;font-weight:850!important;background:var(--soft)!important;color:var(--brand)!important;border:1px solid rgba(47,128,237,.20)!important;box-shadow:none!important}
 .notifyProfileV53{margin-top:10px;border-top:1px solid rgba(127,127,127,.12);padding-top:9px}.notifyProfileTitle{font-size:12px!important;color:var(--muted)!important;text-transform:uppercase!important;letter-spacing:.06em!important;margin-bottom:7px!important;font-weight:900!important}.notifyMemberPanel{border:1px solid var(--line);border-radius:15px;background:var(--card);margin:7px 0;overflow:hidden}.notifyPanelHead{width:100%;border:0;background:var(--soft);min-height:44px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.9fr) 26px;align-items:center;gap:8px;text-align:left;padding:8px 10px;color:var(--text);box-shadow:none}.notifyPanelHead b{font-size:13px;line-height:1.05;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notifyPanelHead small{display:block;font-size:10px;color:var(--muted);margin-top:2px}.notifyPanelProfile{font-size:11px;color:var(--muted);font-weight:850;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notifyPanelToggle{width:24px;height:24px;border-radius:999px;background:var(--card);display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:18px;font-weight:900}.notifyPanelBody{padding:8px}.notifyMemberPanel.collapsed .notifyPanelBody{display:none}.notifyToggles{display:grid!important;grid-template-columns:1fr 1fr!important;gap:6px!important}.notifyChoice{min-height:30px!important;border-radius:11px!important;padding:5px 7px!important;font-size:11px!important;gap:6px!important;font-weight:850!important}.notifyChoice .notifyMark{order:0!important;width:17px!important;height:17px!important;border-radius:6px!important;font-size:11px!important;flex:none!important}.notifyChoice .notifyText{font-size:11px!important;line-height:1.1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}.notifyChoice.off .notifyMark{color:transparent!important;background:transparent!important;border:1px solid rgba(130,140,160,.35)!important}.notifyChoice.on{background:rgba(45,127,249,.12)!important;border-color:rgba(45,127,249,.45)!important;color:var(--brand)!important}.notifyChoice.on .notifyMark{background:var(--brand)!important;color:white!important;border-color:var(--brand)!important}
 @media(max-width:360px){.notifyToggles{grid-template-columns:1fr!important}.notifyPanelHead{grid-template-columns:minmax(0,1fr) 24px}.notifyPanelProfile{display:none}}
+
+/* ===== v54 SaaS onboarding / family actions ===== */
+.onboarding{display:grid;gap:14px;text-align:left}.onboardHero{padding:16px;border-radius:22px;background:linear-gradient(135deg,rgba(45,127,249,.12),rgba(48,196,141,.10));border:1px solid rgba(45,127,249,.18)}.onboardHero h2{margin:0 0 8px;font-size:22px}.onboardHero p{margin:0;color:var(--muted);font-size:14px;line-height:1.35}.onboardGrid{display:grid;gap:10px}.onboardOption{border:1px solid var(--line);border-radius:18px;background:var(--card);padding:12px;text-align:left}.onboardOption b{display:block;font-size:16px;margin-bottom:4px}.onboardOption span{display:block;font-size:13px;color:var(--muted);line-height:1.35}.familyDangerZone{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}.familyActionsV54{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.familyActionsV54 button{min-height:32px!important;border-radius:11px!important;font-size:12px!important;padding:8px 10px!important}.dataHint{font-size:12px;color:var(--muted);line-height:1.35;margin-top:6px}
+
 </style>
 </head>
 <body>
@@ -1149,6 +1153,7 @@
           <div class="profileList">${members.map(m=>`<div class="profileItem"><div><div class="profileName">${escapeHtml(m.full_name||String(m.tg_id))}</div><div class="meta">ID: ${m.tg_id} · ${escapeHtml(roleRu(m.role))}${m.linked_profile_id?' · профиль #'+m.linked_profile_id:''}</div></div>${f.can_manage?`<button class="smallBtn gray" onclick="editFamilyMember(${m.id}, '${m.role}', ${m.linked_profile_id||0})">Роль</button>${m.role!=='owner'?`<button class="smallBtn danger" onclick="removeFamilyMember(${m.id})">Удалить</button>`:'<span></span>'}`:''}</div>`).join('')}</div>
           ${f.can_manage?`<div class="sectionTitle">Приглашения</div><div class="sectionTools"><button class="smallBtn" onclick="createInviteUi(${f.id}, 'parent')">Пригласить родителя</button><button class="smallBtn" onclick="createInviteUi(${f.id}, 'child')">Пригласить ребенка</button><button class="smallBtn gray" onclick="createInviteUi(${f.id}, 'viewer')">Только просмотр</button></div>
           <div class="auditList">${invites.length?invites.map(i=>`<div class="auditItem"><div class="auditTop"><span>${escapeHtml(roleRu(i.role))}</span><span>${i.used_count}/${i.max_uses}</span></div><div class="auditText"><input readonly value="${escapeAttr(i.link)}" onclick="this.select()"></div><div class="sectionTools"><button class="smallBtn gray" onclick="copyText('${escapeAttr(i.link)}')">Копировать</button><button class="smallBtn danger" onclick="deleteInvite(${i.id})">Удалить</button></div></div>`).join(''):'<div class="empty">Активных приглашений нет</div>'}</div>`:''}
+          <div class="familyDangerZone"><div class="sectionTitle">Данные семьи</div><div class="familyActionsV54"><button class="gray" onclick="exportFamilyData(${f.id})">Экспорт JSON</button><button class="gray" onclick="leaveFamily(${f.id})">Выйти из семьи</button>${f.role==='owner'?`<button class="danger" onclick="deleteFamilyData(${f.id})">Удалить семью</button>`:''}</div><div class="dataHint">Экспорт скачивает структурированную копию данных семьи. Удаление семьи доступно только владельцу.</div></div>
         </div>`);
       }
       html.push(`<button class="wide gray" onclick="createFamilyUi()">Создать еще одну семью</button>`);
@@ -1157,6 +1162,16 @@
   }
   async function createFamilyUi(){const name=await openModal('Создать семью','<label>Название семьи</label><input id="famName" placeholder="Например, Семья Ивановых">',()=>closeModal(document.getElementById('famName').value.trim())); if(!name)return; await api('/api/families',{method:'POST',body:JSON.stringify({name})}); toast('Семья создана'); await loadProfiles(); await loadFamilyBox();}
   async function renameFamily(id,current){const name=await openModal('Переименовать семью',`<label>Название</label><input id="famName" value="${escapeAttr(current)}">`,()=>closeModal(document.getElementById('famName').value.trim())); if(!name)return; await api('/api/families/'+id,{method:'PUT',body:JSON.stringify({name})}); toast('Семья обновлена'); await loadFamilyBox();}
+
+  async function exportFamilyData(id){
+    try{
+      const res=await fetch('/api/families/'+id+'/export',{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});
+      if(!res.ok) throw new Error(await res.text());
+      const blob=await res.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='family_export_'+id+'.json'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1200);
+    }catch(e){toast('Не удалось выгрузить данные: '+(e.message||e));}
+  }
+  async function leaveFamily(id){const ok=await confirmAction('Выйти из семьи?', 'Вы потеряете доступ к профилям этой семьи.', 'Если вы единственный владелец, сначала назначьте другого владельца или удалите семью.'); if(!ok)return; await api('/api/families/'+id+'/leave',{method:'POST'}); toast('Вы вышли из семьи'); localStorage.removeItem('activeProfileId'); await loadProfiles(); await loadFamilyBox();}
+  async function deleteFamilyData(id){const ok=await confirmAction('Удалить семью и данные?', 'Будут удалены профили, назначения, расписание, приемы, аптечка и настройки этой семьи.', 'Перед удалением скачайте экспорт. Действие необратимо.'); if(!ok)return; await api('/api/families/'+id,{method:'DELETE'}); toast('Семья удалена'); localStorage.removeItem('activeProfileId'); await loadProfiles(); await loadFamilyBox();}
   async function createInviteUi(familyId,role){
     const needProfile=role==='child'||role==='viewer';
     const body=`<label>Роль</label><select id="invRole" onchange="document.getElementById('invProfileLine').classList.toggle('hidden', !(this.value==='child'||this.value==='viewer'))"><option value="parent" ${role==='parent'?'selected':''}>Родитель</option><option value="child" ${role==='child'?'selected':''}>Ребенок</option><option value="viewer" ${role==='viewer'?'selected':''}>Только просмотр</option></select><div id="invProfileLine" class="${needProfile?'':'hidden'}"><label>Профиль ребенка</label><select id="invProfile">${childProfileOptions('')}</select></div><label>Количество использований</label><input id="invMax" type="number" value="1" min="1" max="20">`;
@@ -1345,13 +1360,30 @@
     if(!document.getElementById('pageMore')?.classList.contains('hidden')) showMoreTab(currentMoreTab||'family');
   }
 
+  function showOnboarding(kind){
+    const access=document.getElementById('access');
+    document.getElementById('main')?.classList.add('hidden');
+    document.getElementById('bottomTabs')?.classList.add('hidden');
+    access.className='card onboarding';
+    access.classList.remove('hidden');
+    if(kind==='pending'){
+      access.innerHTML=`<div class="onboardHero"><h2>Доступ ожидает подтверждения</h2><p>Заявка отправляется администратору после команды <b>/start</b> в Telegram. После подтверждения здесь появится ваша семья и личный профиль.</p></div><div class="onboardGrid"><div class="onboardOption"><b>Создать свою семью</b><span>Станет доступно сразу после подтверждения администратором.</span></div><div class="onboardOption"><b>Присоединиться по приглашению</b><span>Откройте ссылку-приглашение в Telegram. Если ссылка действительна, бот добавит вас в нужную семью.</span></div></div>`;
+    }else{
+      access.innerHTML=`<div class="onboardHero"><h2>Начнем настройку</h2><p>Создайте семью или присоединитесь по ссылке-приглашению. В семье можно вести профили детей, назначения, аптечку и уведомления.</p></div><div class="onboardGrid"><button class="wide" onclick="onboardingCreateFamily()">Создать семью</button><div class="onboardOption"><b>Есть приглашение?</b><span>Откройте Telegram-ссылку от владельца семьи: бот сам добавит вас в нужную роль.</span></div></div>`;
+    }
+  }
+  async function onboardingCreateFamily(){const name=await openModal('Создать семью','<label>Название семьи</label><input id="famName" placeholder="Например, Семья Ивановых">',()=>closeModal(document.getElementById('famName').value.trim())); if(!name)return; await api('/api/families',{method:'POST',body:JSON.stringify({name})}); toast('Семья создана'); document.getElementById('access')?.classList.add('hidden'); await init();}
+
   async function init(){
     try{
       renderFrequencySlots();
       try{const ai=await api('/api/ai/status');aiEnabled=!!ai.enabled;}catch(e){aiEnabled=false;}
       me=await api('/api/me');
+      if(me?.access_pending){ showOnboarding('pending'); return; }
       await loadProfiles();
       me=await api('/api/me');
+      if(!profiles.length){ showOnboarding('empty'); return; }
+      document.getElementById('access')?.classList.add('hidden');
       document.getElementById('main').classList.remove('hidden');
       document.getElementById('bottomTabs').classList.remove('hidden');
       document.body.classList.toggle('readonly', !canManage());
@@ -1361,7 +1393,8 @@
     }catch(e){
       const access=document.getElementById('access');
       access.className='card deny';
-      access.textContent='Доступ пока не подтвержден. Напишите боту /start, чтобы отправить заявку администратору, и дождитесь подтверждения.';
+      access.classList.remove('hidden');
+      access.innerHTML='<b>Не удалось открыть приложение</b><br><span class="muted">'+escapeHtml(e.message||String(e))+'</span>';
     }
   }
 
