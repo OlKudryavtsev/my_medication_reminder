@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
-from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride, InventoryItem, MedicineCourse
+from .db import Medicine, Schedule, DoseEvent, Profile, User, AuditLog, TreatmentCourse, MealOverride, InventoryItem, MedicineCourse, Family, FamilyMember, NotificationSetting
 from .messages import REMINDER_TEMPLATES, THANKS_TEMPLATES
 
 settings = get_settings()
@@ -16,43 +16,78 @@ TZ = ZoneInfo(settings.timezone)
 
 
 async def ensure_profiles(session: AsyncSession) -> None:
-    """Create child profile and personal parent profiles; attach legacy schedules to child profile."""
+    """Create/migrate default family and legacy profiles without deleting data."""
+    # db.init_db() already runs migrate_families(); keep this lightweight guard for runtime calls.
+    default_family = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True))).scalar_one_or_none()
+    if not default_family:
+        owner_user = None
+        if settings.parents:
+            owner_user = (await session.execute(select(User).where(User.tg_id == settings.parents[0]))).scalar_one_or_none()
+        default_family = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
+        session.add(default_family)
+        await session.flush()
+    # Existing deployments: ensure there is a child profile when CHILD_CHAT_ID is configured.
     child_profile = None
     if settings.child:
         child_profile = (await session.execute(
-            select(Profile).where(Profile.kind == "child", Profile.active == True)
-        )).scalar_one_or_none()
+            select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "child", Profile.active == True).order_by(Profile.id)
+        )).scalars().first()
         if not child_profile:
-            child_profile = Profile(name="Ребенок", kind="child", owner_tg_id=settings.child, active=True)
+            child_profile = Profile(name="Ребенок", kind="child", owner_tg_id=settings.child, family_id=default_family.id, active=True)
             session.add(child_profile)
             await session.flush()
-        else:
+        elif not child_profile.owner_tg_id:
             child_profile.owner_tg_id = settings.child
-
+    # Existing deployments: personal profiles for configured parents.
     for parent_id in settings.parents:
         parent_profile = (await session.execute(
-            select(Profile).where(Profile.kind == "personal", Profile.owner_tg_id == parent_id, Profile.active == True)
+            select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "personal", Profile.owner_tg_id == parent_id, Profile.active == True)
         )).scalar_one_or_none()
         if not parent_profile:
-            session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, active=True))
-
+            session.add(Profile(name="Мой профиль", kind="personal", owner_tg_id=parent_id, family_id=default_family.id, active=True))
+    # Attach legacy profiles/schedules.
+    for p in (await session.execute(select(Profile).where(Profile.family_id.is_(None)))).scalars().all():
+        p.family_id = default_family.id
     if child_profile:
-        legacy = (await session.execute(
-            select(Schedule).where(Schedule.profile_id.is_(None))
-        )).scalars().all()
+        legacy = (await session.execute(select(Schedule).where(Schedule.profile_id.is_(None)))).scalars().all()
         for sched in legacy:
             sched.profile_id = child_profile.id
-
-    users = (await session.execute(select(User))).scalars().all()
-    for user in users:
-        if user.role == "child" and child_profile:
-            user.active_profile_id = user.active_profile_id or child_profile.id
-        elif user.role == "parent":
-            personal = (await session.execute(
-                select(Profile).where(Profile.kind == "personal", Profile.owner_tg_id == user.tg_id, Profile.active == True)
-            )).scalar_one_or_none()
-            user.active_profile_id = user.active_profile_id or (child_profile.id if child_profile else (personal.id if personal else None))
     await session.commit()
+
+
+async def ensure_user_account(session: AsyncSession, tg_id: int, full_name: str = "", role_hint: str = "") -> User:
+    """Create a DB user and a private family for any Telegram user.
+
+    This is the key v44 change: users no longer need to be listed in Railway env vars.
+    Configured Railway users are migrated to the default family; any other user gets
+    their own family and personal profile automatically.
+    """
+    await ensure_profiles(session)
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    cfg_role = "child" if settings.child and tg_id == settings.child else "parent" if tg_id in settings.parents else "parent"
+    if not user:
+        user = User(tg_id=tg_id, full_name=full_name or "", role=(role_hint or cfg_role or "parent"))
+        session.add(user)
+        await session.flush()
+    else:
+        if full_name:
+            user.full_name = full_name
+        if user.role in {"", "unknown", None}:
+            user.role = role_hint or cfg_role or "parent"
+    # If already a member somewhere, don't create another family.
+    existing_member = (await session.execute(select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True).order_by(FamilyMember.id))).scalars().first()
+    if not existing_member:
+        fam_name = f"Семья {full_name}" if full_name else "Моя семья"
+        family = Family(name=fam_name[:255], owner_user_id=user.id, active=True)
+        session.add(family)
+        await session.flush()
+        personal = Profile(name="Мой профиль", kind="personal", owner_tg_id=tg_id, family_id=family.id, active=True)
+        session.add(personal)
+        await session.flush()
+        session.add(FamilyMember(family_id=family.id, user_id=user.id, role="owner", linked_profile_id=None, active=True))
+        user.active_profile_id = personal.id
+    await session.commit()
+    return user
 
 
 async def get_child_profile(session: AsyncSession) -> Profile | None:
@@ -63,24 +98,29 @@ async def get_child_profile(session: AsyncSession) -> Profile | None:
 
 
 async def profiles_for_user(session: AsyncSession, tg_id: int, role: str) -> list[Profile]:
-    await ensure_profiles(session)
-    if role == "parent":
-        # Родитель видит все детские профили и свой личный профиль.
-        q = select(Profile).where(
-            Profile.active == True,
-            or_(Profile.kind == "child", Profile.owner_tg_id == tg_id),
-        ).order_by(Profile.kind, Profile.id)
-    elif role == "child":
-        # Ребенок управляет своим детским профилем. Если детских профилей несколько,
-        # показываем первый профиль, привязанный к CHILD_CHAT_ID, либо первый активный детский.
-        q = select(Profile).where(
-            Profile.active == True,
-            Profile.kind == "child",
-            or_(Profile.owner_tg_id == tg_id, Profile.owner_tg_id.is_(None)),
-        ).order_by(Profile.owner_tg_id.desc(), Profile.id)
-    else:
+    user = await ensure_user_account(session, tg_id, role_hint=role)
+    rows = (await session.execute(
+        select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True)
+    )).scalars().all()
+    if not rows:
         return []
-    return list((await session.execute(q)).scalars().all())
+    profile_ids: set[int] = set()
+    family_ids: set[int] = set()
+    for m in rows:
+        if m.role in {"owner", "parent"}:
+            family_ids.add(m.family_id)
+        elif m.role == "child" and m.linked_profile_id:
+            profile_ids.add(m.linked_profile_id)
+        elif m.role == "viewer" and m.linked_profile_id:
+            profile_ids.add(m.linked_profile_id)
+    conditions = []
+    if family_ids:
+        conditions.append(Profile.family_id.in_(family_ids))
+    if profile_ids:
+        conditions.append(Profile.id.in_(profile_ids))
+    if not conditions:
+        return []
+    return list((await session.execute(select(Profile).where(Profile.active == True, or_(*conditions)).order_by(Profile.family_id, Profile.kind, Profile.id))).scalars().all())
 
 
 async def resolve_profile_id(session: AsyncSession, tg_id: int, role: str, requested_profile_id: int | None = None) -> int:
@@ -109,7 +149,17 @@ async def set_active_profile(session: AsyncSession, tg_id: int, role: str, profi
 
 
 async def is_profile_manager(session: AsyncSession, tg_id: int, role: str, profile_id: int) -> bool:
-    return profile_id in {p.id for p in await profiles_for_user(session, tg_id, role)}
+    user = await ensure_user_account(session, tg_id, role_hint=role)
+    profile = (await session.execute(select(Profile).where(Profile.id == profile_id, Profile.active == True))).scalar_one_or_none()
+    if not profile:
+        return False
+    member = (await session.execute(select(FamilyMember).where(
+        FamilyMember.user_id == user.id,
+        FamilyMember.family_id == profile.family_id,
+        FamilyMember.active == True,
+        FamilyMember.role.in_(["owner", "parent"]),
+    ))).scalar_one_or_none()
+    return bool(member)
 
 
 async def profile_recipients(session: AsyncSession, profile_id: int) -> list[int]:
@@ -118,10 +168,20 @@ async def profile_recipients(session: AsyncSession, profile_id: int) -> list[int
         return []
     if profile.kind == "personal" and profile.owner_tg_id:
         return [int(profile.owner_tg_id)]
-    recipients = []
-    if settings.child:
-        recipients.append(settings.child)
-    recipients.extend(settings.parents)
+    # Family-based recipients: child linked to the profile + parents/owners in the family.
+    rows = (await session.execute(
+        select(FamilyMember, User).join(User, User.id == FamilyMember.user_id).where(
+            FamilyMember.family_id == profile.family_id,
+            FamilyMember.active == True,
+            or_(FamilyMember.role.in_(["owner", "parent"]), FamilyMember.linked_profile_id == profile.id),
+        )
+    )).all()
+    recipients = [int(user.tg_id) for _member, user in rows if user and user.tg_id]
+    # Backward-compatible fallback for the migrated default family.
+    if not recipients:
+        if settings.child:
+            recipients.append(settings.child)
+        recipients.extend(settings.parents)
     return list(dict.fromkeys(recipients))
 
 
@@ -152,7 +212,10 @@ async def log_action(
 
 
 async def create_child_profile(session: AsyncSession, name: str, actor_tg_id: int) -> Profile:
-    profile = Profile(name=name.strip() or "Ребенок", kind="child", owner_tg_id=None, active=True)
+    user = await ensure_user_account(session, actor_tg_id, role_hint="parent")
+    member = (await session.execute(select(FamilyMember).where(FamilyMember.user_id == user.id, FamilyMember.active == True, FamilyMember.role.in_(["owner", "parent"])).order_by(FamilyMember.id))).scalars().first()
+    family_id = member.family_id if member else None
+    profile = Profile(name=name.strip() or "Ребенок", kind="child", owner_tg_id=None, family_id=family_id, active=True)
     session.add(profile)
     await session.flush()
     await log_action(session, profile.id, actor_tg_id, "profile_created", "profile", profile.id, f"Создан детский профиль: {profile.name}")

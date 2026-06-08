@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem, MedicineCourse
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem, MedicineCourse, Family, FamilyMember, FamilyInvite, NotificationSetting
 from .ai import ai_enabled, ask_json, MEDICINE_SCHEMA_PROMPT, PRESCRIPTION_IMAGE_PROMPT, INVENTORY_PHOTO_PROMPT, REPORT_PROMPT, AIUnavailable
 from .service import (
     seed_default_schedule,
@@ -42,6 +42,7 @@ from .service import (
     group_key_for_due,
     group_reminder_text,
     ensure_profiles,
+    ensure_user_account,
     profiles_for_user,
     resolve_profile_id,
     set_active_profile,
@@ -140,6 +141,10 @@ class ProfilePayload(BaseModel):
     name: str
 
 
+class FamilyNamePayload(BaseModel):
+    name: str
+
+
 class CoursePayload(BaseModel):
     name: str
     assignment_date: str | None = None
@@ -183,9 +188,8 @@ def role_for_tg_id(tg_id: int | None) -> str:
         return "unknown"
     if settings.child and tg_id == settings.child:
         return "child"
-    if tg_id in settings.parents:
-        return "parent"
-    return "unknown"
+    # v44: any Telegram user may use the app. Unknown users become owners of their own family.
+    return "parent"
 
 
 def validate_init_data(init_data: str) -> int | None:
@@ -212,8 +216,8 @@ def validate_init_data(init_data: str) -> int | None:
 def require_known(request: Request) -> tuple[int, str]:
     tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
     role = role_for_tg_id(tg_id)
-    if role == "unknown" or tg_id is None:
-        raise HTTPException(status_code=403, detail="Access denied for unknown user")
+    if tg_id is None:
+        raise HTTPException(status_code=403, detail="Access denied")
     return tg_id, role
 
 
@@ -236,6 +240,7 @@ def requested_profile_id(request: Request) -> int | None:
 
 async def require_profile(request: Request, session: SessionLocal) -> tuple[int, str, int]:
     tg_id, role = require_known(request)
+    await ensure_user_account(session, tg_id, role_hint=role)
     try:
         pid = await resolve_profile_id(session, tg_id, role, requested_profile_id(request))
     except ValueError:
@@ -404,7 +409,7 @@ async def api_me(request: Request):
     async with SessionLocal() as session:
         profiles = await profiles_for_user(session, tg_id, role)
         active_id = await resolve_profile_id(session, tg_id, role, requested_profile_id(request)) if profiles else None
-    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": role in {"parent", "child"}}
+    return {"tg_id": tg_id, "role": role, "is_parent": role == "parent", "is_child": role == "child", "active_profile_id": active_id, "can_manage_current_profile": role == "parent", "multi_family_enabled": True}
 
 
 @app.get("/api/profiles", response_class=ORJSONResponse)
@@ -414,6 +419,45 @@ async def api_profiles(request: Request):
         profiles = await profiles_for_user(session, tg_id, role)
         active_id = await resolve_profile_id(session, tg_id, role, requested_profile_id(request)) if profiles else None
         return [{"id": p.id, "name": p.name, "kind": p.kind, "owner_tg_id": p.owner_tg_id, "active": p.id == active_id} for p in profiles]
+
+
+@app.get("/api/families", response_class=ORJSONResponse)
+async def api_families(request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        rows = (await session.execute(
+            select(FamilyMember, Family).join(Family, Family.id == FamilyMember.family_id).where(
+                FamilyMember.user_id == user.id,
+                FamilyMember.active == True,
+                Family.active == True,
+            ).order_by(Family.id)
+        )).all()
+        return [
+            {"id": fam.id, "name": fam.name, "role": mem.role, "can_manage": mem.role in {"owner", "parent"}}
+            for mem, fam in rows
+        ]
+
+
+@app.put("/api/families/{family_id}")
+async def api_update_family(family_id: int, payload: FamilyNamePayload, request: Request):
+    tg_id, role = require_known(request)
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        member = (await session.execute(select(FamilyMember).where(
+            FamilyMember.user_id == user.id,
+            FamilyMember.family_id == family_id,
+            FamilyMember.active == True,
+            FamilyMember.role.in_(["owner", "parent"]),
+        ))).scalar_one_or_none()
+        if not member:
+            raise HTTPException(status_code=403, detail="No family management access")
+        fam = (await session.execute(select(Family).where(Family.id == family_id, Family.active == True))).scalar_one_or_none()
+        if not fam:
+            raise HTTPException(status_code=404, detail="Family not found")
+        fam.name = payload.name.strip() or fam.name
+        await session.commit()
+        return {"ok": True, "id": fam.id, "name": fam.name}
 
 
 @app.post("/api/active-profile")

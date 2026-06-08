@@ -35,9 +35,60 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Family(Base):
+    __tablename__ = "families"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), default="Семья")
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FamilyMember(Base):
+    __tablename__ = "family_members"
+    __table_args__ = (UniqueConstraint("family_id", "user_id", name="uq_family_user"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="parent")  # owner/parent/child/viewer
+    linked_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FamilyInvite(Base):
+    __tablename__ = "family_invites"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(20), default="parent")
+    target_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationSetting(Base):
+    __tablename__ = "notification_settings"
+    __table_args__ = (UniqueConstraint("family_member_id", "profile_id", name="uq_member_profile_notifications"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_member_id: Mapped[int] = mapped_column(ForeignKey("family_members.id", ondelete="CASCADE"), index=True)
+    profile_id: Mapped[int] = mapped_column(Integer, index=True)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    taken_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    skipped_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    overdue_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    low_stock_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Profile(Base):
     __tablename__ = "profiles"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(20), default="personal")  # child/personal
     owner_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
@@ -227,6 +278,7 @@ async def run_light_migrations(conn) -> None:
     date_type = "DATE"
     dt_type = "TIMESTAMP WITH TIME ZONE" if dialect != "sqlite" else "DATETIME"
     await _add_column_if_missing(conn, "users", "active_profile_id", "INTEGER")
+    await _add_column_if_missing(conn, "profiles", "family_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "profile_id", "INTEGER")
     await _add_column_if_missing(conn, "schedules", "course_id", "INTEGER")
 
@@ -256,6 +308,60 @@ async def run_light_migrations(conn) -> None:
     await _add_column_if_missing(conn, "dose_events", "skipped_by", "BIGINT")
     await _add_column_if_missing(conn, "dose_events", "postponed_until", dt_type)
     await _add_column_if_missing(conn, "dose_events", "overdue_alert_sent_at", dt_type)
+
+
+async def migrate_families() -> None:
+    """Migrate the single-family Railway configuration into DB-based families.
+
+    Idempotent and non-destructive: existing profiles, schedules, assignments,
+    inventory and dose_events are preserved. Profiles without family_id are attached
+    to the default family created from current Railway settings.
+    """
+    async with SessionLocal() as session:
+        default_family = (await session.execute(select(Family).where(Family.name == "Семья по умолчанию", Family.active == True))).scalar_one_or_none()
+        # Create User rows for configured parents/child if they don't exist yet.
+        configured = []
+        configured.extend((tg, "parent") for tg in settings.parents)
+        if settings.child:
+            configured.append((settings.child, "child"))
+        user_by_tg: dict[int, User] = {}
+        for tg_id, role in configured:
+            user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+            if not user:
+                user = User(tg_id=tg_id, full_name="", role=role)
+                session.add(user)
+                await session.flush()
+            else:
+                if user.role in {"", "unknown", None}:
+                    user.role = role
+            user_by_tg[tg_id] = user
+        if not default_family:
+            owner_user = user_by_tg.get(settings.parents[0]) if settings.parents else None
+            default_family = Family(name="Семья по умолчанию", owner_user_id=owner_user.id if owner_user else None, active=True)
+            session.add(default_family)
+            await session.flush()
+        # Attach legacy profiles to default family.
+        profiles = (await session.execute(select(Profile).where(Profile.family_id.is_(None)))).scalars().all()
+        for p in profiles:
+            p.family_id = default_family.id
+        await session.flush()
+        # Create family memberships from Railway config.
+        for tg_id, role in configured:
+            user = user_by_tg[tg_id]
+            profile = None
+            if role == "child":
+                profile = (await session.execute(select(Profile).where(Profile.family_id == default_family.id, Profile.kind == "child", Profile.active == True).order_by(Profile.id))).scalars().first()
+            member = (await session.execute(select(FamilyMember).where(FamilyMember.family_id == default_family.id, FamilyMember.user_id == user.id))).scalar_one_or_none()
+            if not member:
+                member = FamilyMember(family_id=default_family.id, user_id=user.id, role=("child" if role == "child" else "owner" if tg_id == (settings.parents[0] if settings.parents else None) else "parent"), linked_profile_id=(profile.id if profile else None), active=True)
+                session.add(member)
+            else:
+                member.active = True
+                if role == "child":
+                    member.role = "child"
+                    if profile:
+                        member.linked_profile_id = profile.id
+        await session.commit()
 
 
 async def migrate_schedule_courses() -> None:
@@ -321,4 +427,5 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await run_light_migrations(conn)
+    await migrate_families()
     await migrate_schedule_courses()

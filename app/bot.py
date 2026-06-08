@@ -34,6 +34,7 @@ from .service import (
     get_history_for_medicine,
     parse_date_or_none,
     ensure_profiles,
+    ensure_user_account,
     resolve_profile_id,
     profile_recipients,
 )
@@ -52,29 +53,21 @@ class TakeStates(StatesGroup):
 def role_for(tg_id: int) -> str:
     if settings.child and tg_id == settings.child:
         return "child"
-    if tg_id in settings.parents:
-        return "parent"
-    return "unknown"
+    # v44: anyone may start using the bot. New users become owners of their own family.
+    return "parent"
 
 
 async def upsert_user(message: Message) -> User:
     async with SessionLocal() as session:
         tg_id = message.from_user.id
-        user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
         full = message.from_user.full_name or ""
         role = role_for(tg_id)
-        if not user:
-            user = User(tg_id=tg_id, full_name=full, role=role)
-            session.add(user)
-        else:
-            user.full_name = full
-            user.role = role
-        await session.commit()
+        user = await ensure_user_account(session, tg_id, full, role_hint=role)
         return user
 
 
 def is_known(tg_id: int) -> bool:
-    return role_for(tg_id) in {"parent", "child"}
+    return True
 
 
 def is_parent(tg_id: int) -> bool:
@@ -82,22 +75,11 @@ def is_parent(tg_id: int) -> bool:
 
 
 async def deny_unknown_message(message: Message) -> bool:
-    if is_known(message.from_user.id):
-        return False
-    await message.answer(
-        "⛔ Доступ закрыт. Ваш Telegram ID не указан ни как CHILD_CHAT_ID, ни в PARENT_CHAT_IDS.\n\n"
-        f"Ваш ID: `{message.from_user.id}`\n"
-        "Передайте его родителю/администратору и добавьте в Railway Variables.",
-        parse_mode="Markdown",
-    )
-    return True
+    return False
 
 
 async def deny_unknown_callback(callback: CallbackQuery) -> bool:
-    if is_known(callback.from_user.id):
-        return False
-    await callback.answer("Доступ закрыт: вы не указаны в настройках семьи.", show_alert=True)
-    return True
+    return False
 
 
 def take_keyboard(event_id: int) -> InlineKeyboardMarkup:
