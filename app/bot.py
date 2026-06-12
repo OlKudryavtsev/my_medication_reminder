@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import hmac, hashlib, base64, secrets
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -174,6 +175,24 @@ def choose_time_keyboard(event_id: int, scheduled_hhmm: str) -> InlineKeyboardMa
     ])
 
 
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def make_browser_session_token(tg_id: int) -> str:
+    exp = int((datetime.now(TZ) + timedelta(days=settings.browser_session_days)).timestamp())
+    nonce = secrets.token_urlsafe(10)
+    payload = f"{tg_id}.{exp}.{nonce}"
+    sig = hmac.new(settings.bot_token.encode(), payload.encode(), hashlib.sha256).digest()
+    return f"{payload}.{_b64url(sig)}"
+
+
+def browser_app_url(tg_id: int) -> str:
+    if not settings.app_url:
+        return ""
+    return settings.app_url + ("&" if "?" in settings.app_url else "?") + "browser_session=" + make_browser_session_token(tg_id)
+
+
 def app_keyboard(text: str = "💊 Открыть мини-приложение") -> InlineKeyboardMarkup | None:
     if not settings.app_url:
         return None
@@ -188,6 +207,22 @@ def admin_keyboard() -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text="⚙️ Открыть администрирование", web_app=WebAppInfo(url=settings.admin_url)
     )]])
+
+
+@dp.message(Command("browser"))
+async def browser_link(message: Message) -> None:
+    if await deny_unknown_message(message):
+        return
+    url = browser_app_url(message.from_user.id)
+    if not url:
+        await message.answer("APP_BASE_URL не заполнен в Railway, браузерная ссылка пока недоступна.")
+        return
+    await message.answer(
+        "🌐 Ссылка для открытия приложения в браузере и добавления на экран iPhone:\n\n"
+        f"{url}\n\n"
+        "Откройте ссылку в Safari, затем нажмите “Поделиться” → “На экран Домой”.",
+        disable_web_page_preview=True,
+    )
 
 
 @dp.message(Command("start"))

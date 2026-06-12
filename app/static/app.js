@@ -2,13 +2,27 @@
 
 
   const tg = window.Telegram?.WebApp; if (tg) { tg.ready(); tg.expand(); }
-  const initData = tg?.initData || ""; let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
+  const initData = tg?.initData || "";
+  let browserSession = localStorage.getItem('browserSession') || '';
+  const urlParams = new URLSearchParams(location.search);
+  const incomingBrowserSession = urlParams.get('browser_session') || '';
+  if(incomingBrowserSession){
+    localStorage.setItem('browserSession', incomingBrowserSession);
+    browserSession = incomingBrowserSession;
+    urlParams.delete('browser_session');
+    const clean = location.pathname + (urlParams.toString()?('?'+urlParams.toString()):'') + location.hash;
+    history.replaceState(null, '', clean);
+    fetch('/api/browser/session?token='+encodeURIComponent(incomingBrowserSession)).catch(()=>{});
+  }
+  const isBrowserMode = !initData && !!browserSession;
+  let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
   function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('theme',t);document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙'}
   function toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')}
   function toast(text){const el=document.getElementById('toast');el.textContent=text;el.style.display='block';setTimeout(()=>el.style.display='none',3000)}
-  async function api(path, options={}){const headers={'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):'',...(options.headers||{})}; if(!(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type']='application/json'; const res=await fetch(path,{...options,headers});if(!res.ok)throw new Error(await res.text());const txt=await res.text();return txt?JSON.parse(txt):{}}
+  function authHeaders(extra={}){return {'X-Telegram-Init-Data':initData,'X-Browser-Session':browserSession,'X-Profile-Id':currentProfileId?String(currentProfileId):'',...extra}}
+  async function api(path, options={}){const headers=authHeaders(options.headers||{}); if(!(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type']='application/json'; const res=await fetch(path,{...options,headers});if(!res.ok)throw new Error(await res.text());const txt=await res.text();return txt?JSON.parse(txt):{}}
   let modalResolver=null;
   function closeModal(value=null){document.getElementById('modal').classList.add('hidden');if(modalResolver){modalResolver(value);modalResolver=null}}
   function closeModalByBackdrop(e){if(e.target.id==='modal')closeModal(null)}
@@ -208,7 +222,7 @@
     if(current && names.includes(current)) sel.value=current;
   }
   async function fetchProtectedBlob(url){
-    const res=await fetch(url,{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});
+    const res=await fetch(url,{headers:authHeaders()});
     if(!res.ok)throw new Error(await res.text());
     return await res.blob();
   }
@@ -609,7 +623,7 @@
   async function editInventory(id,name,qty,unit,thr){const body=`<label>Лекарство</label><input id="eiName" value="${name}" readonly><label>Остаток</label><input id="eiQty" type="number" min="0" value="${qty}"><label>Ед. изм.</label><input id="eiUnit" value="${unit}"><label>Напомнить при</label><input id="eiThr" type="number" min="0" value="${thr}">`;const ok=await openModal('Изменить запас', body, ()=>closeModal({name:document.getElementById('eiName').value.trim(),quantity:Number(document.getElementById('eiQty').value||0),unit_name:document.getElementById('eiUnit').value||'шт',low_threshold:Number(document.getElementById('eiThr').value||0)}));if(!ok)return;await api('/api/inventory/'+id,{method:'PUT',body:JSON.stringify(ok)});toast('Запас обновлен');await loadInventory();await loadAudit()}
   async function deleteInventory(id){const ok=await confirmAction('Удалить из аптечки?', 'Запись о запасе лекарства будет скрыта.');if(!ok)return;await api('/api/inventory/'+id,{method:'DELETE'});toast('Удалено из аптечки');await loadInventory();await loadAudit()}
   async function uploadInventoryPhoto(id,file,reload=true){if(!file)return;const fd=new FormData();fd.append('file',file);await api('/api/inventory/'+id+'/photo',{method:'POST',body:fd,headers:{}});toast('Фото сохранено');if(reload)await loadInventory()}
-  async function downloadReport(kind){const res=await fetch(`/api/reports/doctor.${kind}?days=30`,{headers:{'X-Telegram-Init-Data':initData,'X-Profile-Id':currentProfileId?String(currentProfileId):''}});if(!res.ok){toast('Не удалось сформировать отчет');return}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=kind==='pdf'?'doctor_report.pdf':'doctor_report.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+  async function downloadReport(kind){const res=await fetch(`/api/reports/doctor.${kind}?days=30`,{headers:authHeaders()});if(!res.ok){toast('Не удалось сформировать отчет');return}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=kind==='pdf'?'doctor_report.pdf':'doctor_report.xlsx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 
   async function loadStats(){const rows=await api('/api/stats');const root=document.getElementById('stats');const report=`<div class="formrow" style="margin-bottom:12px"><b>ИИ-черновик отчета для врача</b><div class="fieldLine"><label>Период</label><select id="aiReportDays"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option></select></div><button class="wide gray" onclick="aiDoctorReportDraft()" ${aiEnabled?'':'disabled'}>Подготовить черновик</button>${aiEnabled?'':'<div class="muted" style="font-size:12px;margin-top:6px">ИИ выключен в настройках Railway</div>'}</div>`;if(!rows.length){root.innerHTML=report+'<div class="empty">Статистики пока нет</div>';return}root.innerHTML=report+`<div class="tableWrap"><table class="miniTable statsTable"><tr><th>Препарат</th><th>✅</th><th>⏭️</th><th>⏳</th><th>%</th></tr>${rows.map(r=>`<tr><td>${escapeHtml(r.medicine)}</td><td>${r.taken}</td><td>${r.skipped}</td><td>${r.pending}</td><td>${r.taken_percent}%</td></tr>`).join('')}</table></div>`}
   async function loadMedicines(){const select=document.getElementById('medicineSelect');const meds=await api('/api/medicines');select.innerHTML=meds.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');if(meds.length)loadHistory();else document.getElementById('history').innerHTML='<div class="empty">Препаратов пока нет</div>'}
@@ -991,6 +1005,7 @@
     if(name==='profiles') loadProfileAdmin();
     if(name==='audit') loadAudit();
     if(name==='notify') loadNotificationSettings();
+    if(name==='ui') renderPwaBox();
   }
   function showTab(name){
     ['today','assignments','inventory','analytics','more'].forEach(t=>{document.getElementById(pageId(t))?.classList.add('hidden');document.getElementById(tabId(t))?.classList.remove('active')});
@@ -1211,6 +1226,53 @@ async function loadNotificationSettings(){
     }).join('') + `<div class="muted" style="font-size:12px;margin-top:10px">Настройки применяются к конкретному участнику и профилю. По умолчанию родители получают важные уведомления, ребенок — напоминания по своему профилю.</div>`;
   }catch(e){root.innerHTML=`<div class="empty">Не удалось загрузить настройки уведомлений.<br><small>${escapeHtml(e.message||String(e))}</small></div>`;}
 }
+
+
+  function base64ToUint8Array(base64String){
+    const padding='='.repeat((4-base64String.length%4)%4);
+    const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+    const raw=atob(base64); const arr=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+    return arr;
+  }
+  async function ensureServiceWorker(){
+    if(!('serviceWorker' in navigator)) throw new Error('Service Worker не поддерживается');
+    return await navigator.serviceWorker.register('/sw.js');
+  }
+  async function enablePush(){
+    try{
+      if(!browserSession && !initData){toast('Откройте приложение по ссылке из команды /browser');return}
+      if(!('Notification' in window) || !('PushManager' in window)){toast('Push-уведомления не поддерживаются этим браузером');return}
+      const perm=await Notification.requestPermission();
+      if(perm!=='granted'){toast('Разрешение на уведомления не выдано');renderPwaBox();return}
+      const cfg=await api('/api/push/public-key');
+      if(!cfg.enabled || !cfg.public_key){toast('VAPID-ключи не настроены в Railway');renderPwaBox();return}
+      const reg=await ensureServiceWorker();
+      const sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:base64ToUint8Array(cfg.public_key)});
+      await api('/api/push/subscribe',{method:'POST',body:JSON.stringify(sub.toJSON())});
+      toast('Уведомления включены'); renderPwaBox();
+    }catch(e){toast('Не удалось включить уведомления: '+(e.message||e)); renderPwaBox();}
+  }
+  async function disablePush(){
+    try{
+      const reg=await navigator.serviceWorker.getRegistration('/sw.js');
+      const sub=reg?await reg.pushManager.getSubscription():null;
+      if(sub){await api('/api/push/unsubscribe',{method:'POST',body:JSON.stringify({endpoint:sub.endpoint})}); await sub.unsubscribe();}
+      toast('Уведомления отключены'); renderPwaBox();
+    }catch(e){toast('Не удалось отключить уведомления')}
+  }
+  async function browserLogout(){
+    localStorage.removeItem('browserSession'); browserSession='';
+    try{await fetch('/api/browser/logout',{method:'POST'});}catch(e){}
+    toast('Браузерная сессия сброшена'); location.reload();
+  }
+  async function renderPwaBox(){
+    const root=document.getElementById('pwaBox'); if(!root)return;
+    const standalone=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    let pushText='Не проверено'; let sub=null; let supported=('serviceWorker' in navigator)&&('PushManager' in window)&&('Notification' in window);
+    try{const reg= supported? await navigator.serviceWorker.getRegistration('/sw.js'):null; sub=reg?await reg.pushManager.getSubscription():null; pushText=sub?'включены':(supported?'выключены':'не поддерживаются');}catch(e){}
+    root.innerHTML=`<div class="pwaStatus">Режим: <b>${isBrowserMode?'браузер / ярлык iPhone':'Telegram Mini App'}</b><br>На экране Домой: <b>${standalone?'да':'нет'}</b><br>Web push: <b>${pushText}</b></div><div class="pwaActions"><button onclick="enablePush()">Включить уведомления</button><button class="gray" onclick="disablePush()">Отключить</button></div>${isBrowserMode?'<button class="danger wide" onclick="browserLogout()">Сбросить привязку браузера</button>':'<div class="muted" style="font-size:12px">Для установки на экран iPhone откройте ссылку из команды <b>/browser</b> в Safari и выберите “Поделиться” → “На экран Домой”.</div>'}`;
+  }
 
   init();
 

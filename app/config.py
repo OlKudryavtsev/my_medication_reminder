@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     openai_enabled: bool = False
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    browser_session_days: int = 180
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

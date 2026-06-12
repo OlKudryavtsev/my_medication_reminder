@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import json
 import secrets
+import base64
 from io import BytesIO
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
@@ -13,15 +14,16 @@ from urllib.parse import parse_qsl
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import FileResponse, ORJSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, ORJSONResponse, Response, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select, or_, delete
 from sqlalchemy.orm import selectinload
+from pywebpush import webpush, WebPushException
 
 from .bot import bot, dp, take_keyboard, group_take_keyboard
 from .config import get_settings
-from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem, MedicineCourse, Family, FamilyMember, FamilyInvite, NotificationSetting
+from .db import init_db, SessionLocal, DoseEvent, Schedule, Medicine, User, Profile, TreatmentCourse, TreatmentAttachment, InventoryItem, MedicineCourse, Family, FamilyMember, FamilyInvite, NotificationSetting, WebPushSubscription
 from .ai import ai_enabled, ask_json, MEDICINE_SCHEMA_PROMPT, PRESCRIPTION_IMAGE_PROMPT, INVENTORY_PHOTO_PROMPT, REPORT_PROMPT, AIUnavailable
 from .service import (
     seed_default_schedule,
@@ -218,6 +220,45 @@ def role_for_tg_id(tg_id: int | None) -> str:
     return "pending"
 
 
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def make_browser_session_token(tg_id: int, days: int | None = None) -> str:
+    exp = int((datetime.now(TZ) + timedelta(days=days or settings.browser_session_days)).timestamp())
+    nonce = secrets.token_urlsafe(10)
+    payload = f"{tg_id}.{exp}.{nonce}"
+    sig = hmac.new(settings.bot_token.encode(), payload.encode(), hashlib.sha256).digest()
+    return f"{payload}.{_b64url(sig)}"
+
+
+def validate_browser_session_token(token: str) -> int | None:
+    token = (token or "").strip()
+    if not token:
+        return None
+    parts = token.split(".")
+    if len(parts) != 4:
+        return None
+    tg_raw, exp_raw, nonce, sig_raw = parts
+    try:
+        exp = int(exp_raw)
+        tg_id = int(tg_raw)
+        sig = _b64url_decode(sig_raw)
+    except Exception:
+        return None
+    if exp < int(datetime.now(TZ).timestamp()):
+        raise HTTPException(status_code=401, detail="Browser session expired")
+    payload = f"{tg_id}.{exp}.{nonce}"
+    expected = hmac.new(settings.bot_token.encode(), payload.encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=401, detail="Bad browser session")
+    return tg_id
+
+
 def validate_init_data(init_data: str) -> int | None:
     """Return Telegram user_id when initData is valid. Empty initData is allowed only in dev mode."""
     if not init_data:
@@ -240,7 +281,10 @@ def validate_init_data(init_data: str) -> int | None:
 
 
 def require_known(request: Request) -> tuple[int, str]:
-    tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
+    browser_token = request.headers.get("X-Browser-Session", "") or request.cookies.get("browser_session", "")
+    tg_id = validate_browser_session_token(browser_token) if browser_token else None
+    if tg_id is None:
+        tg_id = validate_init_data(request.headers.get("X-Telegram-Init-Data", ""))
     role = role_for_tg_id(tg_id)
     if tg_id is None:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -292,6 +336,48 @@ async def assert_event_in_profile(session, event_id: int, profile_id: int) -> No
         raise HTTPException(status_code=404, detail="Event not found in this profile")
 
 
+
+
+async def send_web_push_to_tg(session, tg_id: int, title: str, body: str, url: str | None = None) -> None:
+    if not (settings.vapid_public_key and settings.vapid_private_key):
+        return
+    user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+    if not user:
+        return
+    subs = (await session.execute(select(WebPushSubscription).where(WebPushSubscription.user_id == user.id, WebPushSubscription.active == True))).scalars().all()
+    if not subs:
+        return
+    payload = json.dumps({
+        "title": title,
+        "body": body,
+        "url": url or "/app",
+        "icon": "/static/icon-192.png",
+        "badge": "/static/icon-192.png",
+    }, ensure_ascii=False)
+    for sub in subs:
+        info = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info=info,
+                data=payload,
+                vapid_private_key=settings.vapid_private_key,
+                vapid_claims={"sub": "mailto:admin@example.com"},
+            )
+        except Exception:
+            sub.active = False
+
+
+async def notify_tg_and_web(session, chat_id: int, text: str, reply_markup=None, title: str = "Семейная аптечка") -> None:
+    try:
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
+    except Exception:
+        pass
+    body = text.replace("\n", " ")
+    if len(body) > 180:
+        body = body[:177] + "..."
+    await send_web_push_to_tg(session, int(chat_id), title, body)
+
 async def reminder_tick() -> None:
     async with SessionLocal() as session:
         await ensure_events(session)
@@ -311,10 +397,7 @@ async def reminder_tick() -> None:
                 keyboard = group_take_keyboard(group_key)
 
             for chat_id in await profile_recipients(session, profile_id, "reminder"):
-                try:
-                    await bot.send_message(chat_id, text, reply_markup=keyboard)
-                except Exception:
-                    pass
+                await notify_tg_and_web(session, chat_id, text, reply_markup=keyboard, title="Напоминание о лекарстве")
 
             now = datetime.now(TZ)
             for event in events:
@@ -340,10 +423,7 @@ async def overdue_alert_tick() -> None:
             text = overdue_alert_text(rows)
             recipients = await profile_recipients(session, profile_id, "overdue")
             for parent_id in recipients:
-                try:
-                    await bot.send_message(parent_id, text)
-                except Exception:
-                    pass
+                await notify_tg_and_web(session, parent_id, text, title="Просрочен прием")
             for e in rows:
                 e.overdue_alert_sent_at = now
         await session.commit()
@@ -360,10 +440,7 @@ async def low_stock_tick() -> None:
             recipients = await profile_recipients(session, item.profile_id, "low_stock")
             text = f"🛒 Нужно купить лекарство\n{item.name}: осталось {item.quantity} {item.unit_name or 'шт'}\nПорог напоминания: {item.low_threshold}"
             for chat_id in recipients:
-                try:
-                    await bot.send_message(chat_id, text)
-                except Exception:
-                    pass
+                await notify_tg_and_web(session, chat_id, text, title="Нужно купить лекарство")
             item.purchase_alert_sent_at = now
         await session.commit()
 
@@ -381,10 +458,7 @@ async def evening_summary_tick() -> None:
             else:
                 recipients = await profile_recipients(session, profile.id, "daily_summary")
             for chat_id in recipients:
-                try:
-                    await bot.send_message(chat_id, text)
-                except Exception:
-                    pass
+                await notify_tg_and_web(session, chat_id, text, title="Итог дня")
 
 
 @app.on_event("startup")
@@ -414,6 +488,94 @@ async def shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+
+
+@app.get("/manifest.json")
+async def pwa_manifest() -> ORJSONResponse:
+    return ORJSONResponse({
+        "name": "Семейная аптечка",
+        "short_name": "Аптечка",
+        "description": "Расписание приема лекарств, назначения, аптечка и уведомления",
+        "start_url": "/app",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#f6f7fb",
+        "theme_color": "#2f80ed",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"}
+        ]
+    }, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sw.js")
+async def service_worker() -> FileResponse:
+    return FileResponse("app/static/sw.js", media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/browser/session", response_class=ORJSONResponse)
+async def api_browser_session(request: Request):
+    token = request.query_params.get("token", "")
+    tg_id = validate_browser_session_token(token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="Bad browser token")
+    response = ORJSONResponse({"session_token": token, "tg_id": tg_id, "expires_in_days": settings.browser_session_days})
+    response.set_cookie("browser_session", token, max_age=settings.browser_session_days * 24 * 3600, httponly=True, secure=True, samesite="lax")
+    return response
+
+
+@app.post("/api/browser/logout", response_class=ORJSONResponse)
+async def api_browser_logout():
+    response = ORJSONResponse({"ok": True})
+    response.delete_cookie("browser_session")
+    return response
+
+
+@app.get("/api/push/public-key", response_class=ORJSONResponse)
+async def api_push_public_key(request: Request):
+    require_known(request)
+    return {"enabled": bool(settings.vapid_public_key and settings.vapid_private_key), "public_key": settings.vapid_public_key}
+
+
+@app.post("/api/push/subscribe", response_class=ORJSONResponse)
+async def api_push_subscribe(request: Request):
+    tg_id, role = require_known(request)
+    data = await request.json()
+    endpoint = data.get("endpoint", "")
+    keys = data.get("keys") or {}
+    if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
+        raise HTTPException(status_code=400, detail="Bad push subscription")
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        sub = (await session.execute(select(WebPushSubscription).where(WebPushSubscription.endpoint == endpoint))).scalars().first()
+        if not sub:
+            sub = WebPushSubscription(user_id=user.id, endpoint=endpoint)
+            session.add(sub)
+        sub.user_id = user.id
+        sub.p256dh = keys.get("p256dh", "")
+        sub.auth = keys.get("auth", "")
+        sub.user_agent = request.headers.get("user-agent", "")[:1000]
+        sub.active = True
+        sub.updated_at = datetime.now(TZ)
+        await session.commit()
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe", response_class=ORJSONResponse)
+async def api_push_unsubscribe(request: Request):
+    tg_id, role = require_known(request)
+    data = await request.json()
+    endpoint = data.get("endpoint", "")
+    async with SessionLocal() as session:
+        user = await ensure_user_account(session, tg_id, role_hint=role)
+        if endpoint:
+            rows = (await session.execute(select(WebPushSubscription).where(WebPushSubscription.user_id == user.id, WebPushSubscription.endpoint == endpoint))).scalars().all()
+            for row in rows:
+                row.active = False
+        await session.commit()
+    return {"ok": True}
 
 
 @app.get("/app")

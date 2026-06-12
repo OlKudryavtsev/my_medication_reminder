@@ -137,6 +137,19 @@ class InventoryItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WebPushSubscription(Base):
+    __tablename__ = "web_push_subscriptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    endpoint: Mapped[str] = mapped_column(Text, default="")
+    p256dh: Mapped[str] = mapped_column(Text, default="")
+    auth: Mapped[str] = mapped_column(Text, default="")
+    user_agent: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class MealOverride(Base):
     __tablename__ = "meal_overrides"
     __table_args__ = (UniqueConstraint("profile_id", "meal_date", "meal_name", name="uq_profile_meal_day"),)
