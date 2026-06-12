@@ -9,12 +9,13 @@
   if(incomingBrowserSession){
     localStorage.setItem('browserSession', incomingBrowserSession);
     browserSession = incomingBrowserSession;
-    urlParams.delete('browser_session');
-    const clean = location.pathname + (urlParams.toString()?('?'+urlParams.toString()):'') + location.hash;
-    history.replaceState(null, '', clean);
-    fetch('/api/browser/session?token='+encodeURIComponent(incomingBrowserSession)).catch(()=>{});
+    // Важно: не убираем browser_session из адресной строки.
+    // iOS при добавлении на экран Домой часто сохраняет именно текущий URL;
+    // если удалить token через history.replaceState, PWA может открыться без привязки к Telegram.
+    fetch('/api/browser/session?token='+encodeURIComponent(incomingBrowserSession), {credentials:'same-origin'}).catch(()=>{});
   }
-  const isBrowserMode = !initData && !!browserSession;
+  function isStandalonePwa(){return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;}
+  function isBrowserLikeMode(){return !initData || isStandalonePwa() || !!browserSession;}
   let me = null; let profiles = []; let currentProfileId = null; let todayRows = []; let todayFilter = 'pending'; let addMedicineOpen=false; let addAssignmentOpen=false; let addInventoryOpen=false; let aiEnabled=false; localStorage.setItem('todayFilter','pending');
   const savedTheme = localStorage.getItem('theme') || (tg?.colorScheme === 'dark' ? 'dark' : 'light');
   setTheme(savedTheme);
@@ -1241,12 +1242,15 @@ async function loadNotificationSettings(){
   }
   async function enablePush(){
     try{
-      if(!browserSession && !initData){toast('Откройте приложение по ссылке из команды /browser');return}
       if(!('Notification' in window) || !('PushManager' in window)){toast('Push-уведомления не поддерживаются этим браузером');return}
+      // Сначала проверяем серверную авторизацию. В PWA на iPhone localStorage может быть пустым,
+      // но HttpOnly cookie browser_session уже привязана к Telegram-аккаунту и будет отправлена fetch-запросом.
+      let cfg;
+      try{cfg=await api('/api/push/public-key');}
+      catch(authErr){toast('Не найдена привязка к Telegram. Откройте свежую ссылку из команды /browser в Safari.');return}
+      if(!cfg.enabled || !cfg.public_key){toast('VAPID-ключи не настроены в Railway');renderPwaBox();return}
       const perm=await Notification.requestPermission();
       if(perm!=='granted'){toast('Разрешение на уведомления не выдано');renderPwaBox();return}
-      const cfg=await api('/api/push/public-key');
-      if(!cfg.enabled || !cfg.public_key){toast('VAPID-ключи не настроены в Railway');renderPwaBox();return}
       const reg=await ensureServiceWorker();
       const sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:base64ToUint8Array(cfg.public_key)});
       await api('/api/push/subscribe',{method:'POST',body:JSON.stringify(sub.toJSON())});
@@ -1268,10 +1272,12 @@ async function loadNotificationSettings(){
   }
   async function renderPwaBox(){
     const root=document.getElementById('pwaBox'); if(!root)return;
-    const standalone=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    const standalone=isStandalonePwa();
     let pushText='Не проверено'; let sub=null; let supported=('serviceWorker' in navigator)&&('PushManager' in window)&&('Notification' in window);
     try{const reg= supported? await navigator.serviceWorker.getRegistration('/sw.js'):null; sub=reg?await reg.pushManager.getSubscription():null; pushText=sub?'включены':(supported?'выключены':'не поддерживаются');}catch(e){}
-    root.innerHTML=`<div class="pwaStatus">Режим: <b>${isBrowserMode?'браузер / ярлык iPhone':'Telegram Mini App'}</b><br>На экране Домой: <b>${standalone?'да':'нет'}</b><br>Web push: <b>${pushText}</b></div><div class="pwaActions"><button onclick="enablePush()">Включить уведомления</button><button class="gray" onclick="disablePush()">Отключить</button></div>${isBrowserMode?'<button class="danger wide" onclick="browserLogout()">Сбросить привязку браузера</button>':'<div class="muted" style="font-size:12px">Для установки на экран iPhone откройте ссылку из команды <b>/browser</b> в Safari и выберите “Поделиться” → “На экран Домой”.</div>'}`;
+    const modeText = initData && !standalone ? 'Telegram Mini App' : 'браузер / ярлык iPhone';
+    const browserBound = !!browserSession || !initData;
+    root.innerHTML=`<div class="pwaStatus">Режим: <b>${modeText}</b><br>На экране Домой: <b>${standalone?'да':'нет'}</b><br>Web push: <b>${pushText}</b></div><div class="pwaActions"><button onclick="enablePush()">Включить уведомления</button><button class="gray" onclick="disablePush()">Отключить</button></div>${browserBound?'<button class="danger wide" onclick="browserLogout()">Сбросить привязку браузера</button>':'<div class="muted" style="font-size:12px">Для установки на экран iPhone откройте свежую ссылку из команды <b>/browser</b> в Safari и выберите “Поделиться” → “На экран Домой”.</div>'}`;
   }
 
   init();
