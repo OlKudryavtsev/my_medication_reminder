@@ -6,8 +6,8 @@ self.addEventListener('push', event => {
   const title = data.title || 'Семейная аптечка';
   const options = {
     body: data.body || '',
-    icon: data.icon || '/static/icon-192.png',
-    badge: data.badge || '/static/icon-192.png',
+    icon: data.icon || '/static/icon-192-v61.png',
+    badge: data.badge || '/static/icon-192-v61.png',
     data: { url: data.url || '/app' }
   };
   event.waitUntil(self.registration.showNotification(title, options));

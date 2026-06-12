@@ -351,8 +351,8 @@ async def send_web_push_to_tg(session, tg_id: int, title: str, body: str, url: s
         "title": title,
         "body": body,
         "url": url or "/app",
-        "icon": "/static/icon-192.png",
-        "badge": "/static/icon-192.png",
+        "icon": "/static/icon-192-v61.png",
+        "badge": "/static/icon-192-v61.png",
     }, ensure_ascii=False)
     for sub in subs:
         info = {"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}}
@@ -504,8 +504,9 @@ async def pwa_manifest() -> ORJSONResponse:
         "background_color": "#f6f7fb",
         "theme_color": "#2f80ed",
         "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"}
+            {"src": "/static/icon-192-v61.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icon-512-v61.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icon-1024-v61.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable"}
         ]
     }, headers={"Cache-Control": "no-store"})
 
